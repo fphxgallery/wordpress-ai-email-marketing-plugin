@@ -19,13 +19,14 @@ class AIEM_OpenAI {
 
 		if ( $template_html ) {
 			$body_instructions = 'You are an expert email marketing copywriter. You will be given an HTML email template and a content brief. '
-				. 'Fill the template with compelling, conversion-focused copy based on the brief. '
-				. 'Preserve ALL HTML structure, inline CSS, layout, and design elements exactly as-is. '
-				. 'Replace ALL visible placeholder text with real content — this includes generic labels such as "fillmorephx title", "product title", "product text", "Your footer", "Your Heading", "Your text goes here", "Click Here", and any other placeholder-style text. '
-				. 'For image tags: if src is empty or missing, find a relevant publicly accessible image URL and set it; also set a descriptive alt attribute. '
-				. 'For footer sections: write a short professional footer with the site name, a brief tagline or contact note, and the current year. '
-				. 'Exception: if multiple products are provided and the template contains a single product section (a repeated block pattern such as a product card, row, or section), '
-				. 'duplicate that block pattern once per additional product so every product gets its own section. Keep all other structure unchanged. '
+				. 'Your ONLY job is to fill in the content — do NOT change any HTML tags, attributes, or style properties. '
+				. 'Copy every tag and every style attribute character-for-character from the template. '
+				. 'The two things you ARE allowed to change: '
+				. '(1) Text nodes between tags — replace placeholder text ("fillmorephx title", "product title", "product text", "Your footer", "Your Heading", "Your text goes here", "Click Here", etc.) with compelling real content based on the brief. '
+				. '(2) The src and alt attributes on <img> tags — if src is empty, supply a relevant publicly accessible image URL; always set a descriptive alt. '
+				. 'For footer placeholder text: replace with site name, a short tagline, and the current year. '
+				. 'Exception: if multiple products are provided and the template contains a single product section (a repeated block pattern), '
+				. 'duplicate that entire block once per additional product. Copy the block HTML exactly, only changing the text and image values per product. '
 				. 'Return the complete filled template as the html field.';
 		} else {
 			$body_instructions = get_option(
