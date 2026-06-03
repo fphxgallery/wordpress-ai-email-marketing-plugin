@@ -55,9 +55,11 @@ class AIEM_Admin {
 		wp_enqueue_style( 'aiem-admin', AIEM_PLUGIN_URL . 'assets/css/aiem-admin.css', [], AIEM_VERSION );
 		wp_enqueue_script( 'aiem-admin', AIEM_PLUGIN_URL . 'assets/js/aiem-admin.js', [ 'jquery' ], AIEM_VERSION, true );
 		wp_localize_script( 'aiem-admin', 'aiemAdmin', [
-			'ajaxUrl'   => admin_url( 'admin-ajax.php' ),
-			'nonce'     => wp_create_nonce( 'aiem_admin_nonce' ),
-			'adminEmail'=> get_option( 'admin_email' ),
+			'ajaxUrl'            => admin_url( 'admin-ajax.php' ),
+			'nonce'              => wp_create_nonce( 'aiem_admin_nonce' ),
+			'adminEmail'         => get_option( 'admin_email' ),
+			'defaultPrompt'         => 'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.',
+			'defaultTemplatePrompt' => AIEM_OpenAI::default_template_prompt(),
 		] );
 	}
 
@@ -1476,15 +1478,15 @@ class AIEM_Admin {
 					<tr>
 						<th>System Prompt</th>
 						<td>
-							<textarea name="aiem_system_prompt" rows="5" class="large-text"><?php echo esc_textarea( get_option( 'aiem_system_prompt', 'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.' ) ); ?></textarea>
-							<p class="description">Used when generating without a template.</p>
+							<textarea id="aiem-system-prompt" name="aiem_system_prompt" rows="5" class="large-text"><?php echo esc_textarea( get_option( 'aiem_system_prompt', 'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.' ) ); ?></textarea>
+							<p class="description">Used when generating without a template. <button type="button" class="button button-small" id="aiem-reset-prompt" style="margin-left:8px;">Reset to Default</button></p>
 						</td>
 					</tr>
 					<tr>
 						<th>Template System Prompt</th>
 						<td>
-							<textarea name="aiem_template_system_prompt" rows="8" class="large-text"><?php echo esc_textarea( get_option( 'aiem_template_system_prompt', AIEM_OpenAI::default_template_prompt() ) ); ?></textarea>
-							<p class="description">Used when generating with an Email Editor template selected. Controls how the AI fills placeholder text and images.</p>
+							<textarea id="aiem-template-system-prompt" name="aiem_template_system_prompt" rows="8" class="large-text"><?php echo esc_textarea( get_option( 'aiem_template_system_prompt', AIEM_OpenAI::default_template_prompt() ) ); ?></textarea>
+							<p class="description">Used when generating with an Email Editor template selected. <button type="button" class="button button-small" id="aiem-reset-template-prompt" style="margin-left:8px;">Reset to Default</button></p>
 						</td>
 					</tr>
 				</table>

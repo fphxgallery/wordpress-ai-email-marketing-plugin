@@ -15,6 +15,7 @@ An OpenAI-powered email marketing plugin for WordPress. Build and send campaigns
 
 ## Changelog
 
+- **1.1.9** — Add Reset to Default buttons for System Prompt and Template System Prompt in Settings → OpenAI.
 - **1.1.8** — Fix backslash in subject/preview text (WordPress magic quotes on POST data — add `wp_unslash()` before sanitization across all campaign and workflow save paths). Fix AI stripping button styles — explicitly instruct AI to preserve styled anchor tag attributes verbatim.
 - **1.1.7** — Template System Prompt now editable in Settings → OpenAI. Pre-fills with the current default. Allows tuning AI template-fill behaviour without touching code.
 - **1.1.6** — Strengthen template-mode AI prompt to prevent style stripping. AI was rewriting style attributes instead of copying them verbatim. Now explicitly instructed to copy all tags and style properties character-for-character and only change text nodes and img src/alt.

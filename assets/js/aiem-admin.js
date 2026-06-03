@@ -1117,6 +1117,18 @@ jQuery(function ($) {
 		});
 	});
 
+	// Settings: reset prompts to default
+	$('#aiem-reset-prompt').on('click', function () {
+		if (confirm('Reset System Prompt to default?')) {
+			$('#aiem-system-prompt').val(aiemAdmin.defaultPrompt);
+		}
+	});
+	$('#aiem-reset-template-prompt').on('click', function () {
+		if (confirm('Reset Template System Prompt to default?')) {
+			$('#aiem-template-system-prompt').val(aiemAdmin.defaultTemplatePrompt);
+		}
+	});
+
 	// Workflows: process queue now
 	$('#aiem-process-queue-btn').on('click', function () {
 		var btn = $(this);
