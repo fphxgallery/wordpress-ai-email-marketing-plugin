@@ -363,15 +363,15 @@ class AIEM_Ajax {
 		$this->verify_admin();
 
 		$id          = (int) ( $_POST['campaign_id'] ?? 0 );
-		$html        = wp_kses_post( $_POST['html_content'] ?? '' );
-		$name        = sanitize_text_field( $_POST['name'] ?? '' );
-		$subject     = sanitize_text_field( $_POST['subject'] ?? '' );
-		$preheader   = sanitize_text_field( $_POST['preheader'] ?? '' );
+		$html        = wp_kses_post( wp_unslash( $_POST['html_content'] ?? '' ) );
+		$name        = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
+		$subject     = sanitize_text_field( wp_unslash( $_POST['subject'] ?? '' ) );
+		$preheader   = sanitize_text_field( wp_unslash( $_POST['preheader'] ?? '' ) );
 		$list_id     = (int) ( $_POST['list_id'] ?? 0 );
 		$segment_id  = (int) ( $_POST['segment_id'] ?? 0 );
-		$from_name   = sanitize_text_field( $_POST['from_name'] ?? '' );
-		$from_email  = sanitize_email( $_POST['from_email'] ?? '' );
-		$ai_prompt   = sanitize_textarea_field( $_POST['ai_prompt'] ?? '' );
+		$from_name   = sanitize_text_field( wp_unslash( $_POST['from_name'] ?? '' ) );
+		$from_email  = sanitize_email( wp_unslash( $_POST['from_email'] ?? '' ) );
+		$ai_prompt   = sanitize_textarea_field( wp_unslash( $_POST['ai_prompt'] ?? '' ) );
 		$blocks_raw  = wp_unslash( $_POST['blocks'] ?? '[]' );
 		$blocks_arr  = json_decode( $blocks_raw, true );
 		$blocks      = is_array( $blocks_arr ) ? wp_json_encode( $blocks_arr ) : '[]';
@@ -646,14 +646,14 @@ class AIEM_Ajax {
 		$this->verify_admin();
 
 		$id      = (int) ( $_POST['workflow_id'] ?? 0 );
-		$name    = sanitize_text_field( $_POST['name'] ?? '' );
-		$trigger = sanitize_text_field( $_POST['trigger_type'] ?? '' );
+		$name    = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
+		$trigger = sanitize_text_field( wp_unslash( $_POST['trigger_type'] ?? '' ) );
 
-		$send_to  = sanitize_text_field( $_POST['action_send_to'] ?? '{{EMAIL}}' );
-		$subject  = sanitize_text_field( $_POST['action_subject'] ?? '' );
-		$content  = wp_kses_post( $_POST['action_content'] ?? '' );
+		$send_to  = sanitize_text_field( wp_unslash( $_POST['action_send_to'] ?? '{{EMAIL}}' ) );
+		$subject  = sanitize_text_field( wp_unslash( $_POST['action_subject'] ?? '' ) );
+		$content  = wp_kses_post( wp_unslash( $_POST['action_content'] ?? '' ) );
 		$list_id  = (int) ( $_POST['action_list_id'] ?? 0 );
-		$styling  = sanitize_text_field( $_POST['action_email_styling'] ?? 'none' );
+		$styling  = sanitize_text_field( wp_unslash( $_POST['action_email_styling'] ?? 'none' ) );
 
 		$delay_value = max( 0, (int) ( $_POST['delay_value'] ?? 0 ) );
 		$delay_unit  = sanitize_text_field( $_POST['delay_unit'] ?? 'minutes' );

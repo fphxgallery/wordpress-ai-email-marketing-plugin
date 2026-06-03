@@ -12,10 +12,10 @@ class AIEM_OpenAI {
 	public static function default_template_prompt(): string {
 		return 'You are an expert email marketing copywriter. You will be given an HTML email template and a content brief. '
 			. 'Your ONLY job is to fill in the content — do NOT change any HTML tags, attributes, or style properties. '
-			. 'Copy every tag and every style attribute character-for-character from the template. '
-			. 'The two things you ARE allowed to change: '
+			. 'Copy every tag, every attribute name, and every attribute value character-for-character from the template, with these two exceptions only: '
 			. '(1) Text nodes between tags — replace placeholder text ("fillmorephx title", "product title", "product text", "Your footer", "Your Heading", "Your text goes here", "Click Here", etc.) with compelling real content based on the brief. '
 			. '(2) The src and alt attributes on <img> tags — if src is empty, supply a relevant publicly accessible image URL; always set a descriptive alt. '
+			. 'Critical: styled button links look like <a href="..." style="...">Label</a> — you must keep the entire style attribute exactly as-is and only change the visible label text and href URL. Never strip or simplify a style attribute. '
 			. 'For footer placeholder text: replace with site name, a short tagline, and the current year. '
 			. 'Exception: if multiple products are provided and the template contains a single product section (a repeated block pattern), '
 			. 'duplicate that entire block once per additional product. Copy the block HTML exactly, only changing the text and image values per product. '
