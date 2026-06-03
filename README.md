@@ -15,6 +15,7 @@ An OpenAI-powered email marketing plugin for WordPress. Build and send campaigns
 
 ## Changelog
 
+- **1.1.4** — Workflows with zero delay now fire immediately on the subscribe request instead of waiting up to 5 minutes for cron. Delayed workflows still queue for cron as before.
 - **1.1.3** — Fix cron schedule registration order (`cron_schedules` filter now registered in constructor, not inside `init` callback). Add **Process Queue Now** button to Workflows page to manually flush pending workflow emails without relying on WP-Cron.
 - **1.1.2** — Fix workflow queue items never processing when WordPress timezone differs from server PHP timezone. `scheduled_at` was stored with `date()` (server tz) but compared against `current_time('mysql')` (WP tz). Both now use `gmdate()` / UTC consistently.
 - **1.1.1** — Fix activation error on MySQL < 8.0.13: remove DEFAULT values from TEXT/LONGTEXT columns in CREATE TABLE statements (`trigger_config`, `action_send_to`, `action_subject`, `action_content`, `context`, `filters`). MySQL 5.7 and strict-mode MySQL 8.0 reject TEXT DEFAULT at schema creation time.

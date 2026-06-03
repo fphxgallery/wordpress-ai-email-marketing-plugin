@@ -32,6 +32,12 @@ class AIEM_Workflows {
 				] );
 			}
 		}
+
+		// Process immediately so zero-delay workflows fire on this request.
+		// Delayed workflows stay pending and are picked up by the 5-min cron.
+		if ( ! empty( $workflows ) ) {
+			self::process_queue();
+		}
 	}
 
 	public static function handle_campaign_sent( int $campaign_id ): void {
