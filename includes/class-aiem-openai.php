@@ -9,6 +9,19 @@ class AIEM_OpenAI {
 	/**
 	 * Returns array{ subject: string, preview_text: string, html: string } or WP_Error.
 	 */
+	public static function default_template_prompt(): string {
+		return 'You are an expert email marketing copywriter. You will be given an HTML email template and a content brief. '
+			. 'Your ONLY job is to fill in the content — do NOT change any HTML tags, attributes, or style properties. '
+			. 'Copy every tag and every style attribute character-for-character from the template. '
+			. 'The two things you ARE allowed to change: '
+			. '(1) Text nodes between tags — replace placeholder text ("fillmorephx title", "product title", "product text", "Your footer", "Your Heading", "Your text goes here", "Click Here", etc.) with compelling real content based on the brief. '
+			. '(2) The src and alt attributes on <img> tags — if src is empty, supply a relevant publicly accessible image URL; always set a descriptive alt. '
+			. 'For footer placeholder text: replace with site name, a short tagline, and the current year. '
+			. 'Exception: if multiple products are provided and the template contains a single product section (a repeated block pattern), '
+			. 'duplicate that entire block once per additional product. Copy the block HTML exactly, only changing the text and image values per product. '
+			. 'Return the complete filled template as the html field.';
+	}
+
 	public static function generate( string $prompt, array $products = [], string $template_html = '' ): array|WP_Error {
 		$api_key = get_option( 'aiem_openai_key', '' );
 		if ( ! $api_key ) {
@@ -18,16 +31,7 @@ class AIEM_OpenAI {
 		$model = get_option( 'aiem_openai_model', 'gpt-4o' );
 
 		if ( $template_html ) {
-			$body_instructions = 'You are an expert email marketing copywriter. You will be given an HTML email template and a content brief. '
-				. 'Your ONLY job is to fill in the content — do NOT change any HTML tags, attributes, or style properties. '
-				. 'Copy every tag and every style attribute character-for-character from the template. '
-				. 'The two things you ARE allowed to change: '
-				. '(1) Text nodes between tags — replace placeholder text ("fillmorephx title", "product title", "product text", "Your footer", "Your Heading", "Your text goes here", "Click Here", etc.) with compelling real content based on the brief. '
-				. '(2) The src and alt attributes on <img> tags — if src is empty, supply a relevant publicly accessible image URL; always set a descriptive alt. '
-				. 'For footer placeholder text: replace with site name, a short tagline, and the current year. '
-				. 'Exception: if multiple products are provided and the template contains a single product section (a repeated block pattern), '
-				. 'duplicate that entire block once per additional product. Copy the block HTML exactly, only changing the text and image values per product. '
-				. 'Return the complete filled template as the html field.';
+			$body_instructions = get_option( 'aiem_template_system_prompt', self::default_template_prompt() );
 		} else {
 			$body_instructions = get_option(
 				'aiem_system_prompt',

@@ -1477,6 +1477,14 @@ class AIEM_Admin {
 						<th>System Prompt</th>
 						<td>
 							<textarea name="aiem_system_prompt" rows="5" class="large-text"><?php echo esc_textarea( get_option( 'aiem_system_prompt', 'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.' ) ); ?></textarea>
+							<p class="description">Used when generating without a template.</p>
+						</td>
+					</tr>
+					<tr>
+						<th>Template System Prompt</th>
+						<td>
+							<textarea name="aiem_template_system_prompt" rows="8" class="large-text"><?php echo esc_textarea( get_option( 'aiem_template_system_prompt', AIEM_OpenAI::default_template_prompt() ) ); ?></textarea>
+							<p class="description">Used when generating with an Email Editor template selected. Controls how the AI fills placeholder text and images.</p>
 						</td>
 					</tr>
 				</table>
@@ -1769,8 +1777,9 @@ class AIEM_Admin {
 		$options = [
 			'aiem_openai_key'       => sanitize_text_field( $_POST['aiem_openai_key'] ?? '' ),
 			'aiem_openai_model'     => sanitize_text_field( $_POST['aiem_openai_model'] ?? 'gpt-4o' ),
-			'aiem_max_tokens'       => max( 500, min( 8000, (int) ( $_POST['aiem_max_tokens'] ?? 2500 ) ) ),
-			'aiem_system_prompt'    => sanitize_textarea_field( $_POST['aiem_system_prompt'] ?? '' ),
+			'aiem_max_tokens'              => max( 500, min( 8000, (int) ( $_POST['aiem_max_tokens'] ?? 2500 ) ) ),
+			'aiem_system_prompt'           => sanitize_textarea_field( $_POST['aiem_system_prompt'] ?? '' ),
+			'aiem_template_system_prompt'  => sanitize_textarea_field( $_POST['aiem_template_system_prompt'] ?? '' ),
 			'aiem_from_name'        => sanitize_text_field( $_POST['aiem_from_name'] ?? '' ),
 			'aiem_from_email'       => sanitize_email( $_POST['aiem_from_email'] ?? '' ),
 			'aiem_default_list'     => (int) ( $_POST['aiem_default_list'] ?? 0 ),
