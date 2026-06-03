@@ -18,7 +18,7 @@ class AIEM_Workflows {
 
 		foreach ( $workflows as $wf ) {
 			$delay_seconds = self::delay_to_seconds( (int) $wf->delay_value, $wf->delay_unit );
-			$scheduled_at  = date( 'Y-m-d H:i:s', time() + $delay_seconds );
+			$scheduled_at  = gmdate( 'Y-m-d H:i:s', time() + $delay_seconds );
 
 			$queued = AIEM_DB::insert_workflow_queue( (int) $wf->id, $subscriber_id, $scheduled_at );
 
@@ -70,7 +70,7 @@ class AIEM_Workflows {
 			}
 
 			$delay_seconds = self::delay_to_seconds( (int) $wf->delay_value, $wf->delay_unit );
-			$scheduled_at  = date( 'Y-m-d H:i:s', time() + $delay_seconds );
+			$scheduled_at  = gmdate( 'Y-m-d H:i:s', time() + $delay_seconds );
 
 			foreach ( $sent_subscriber_ids as $subscriber_id ) {
 				$queued = AIEM_DB::insert_workflow_queue( (int) $wf->id, $subscriber_id, $scheduled_at, 0, $context );
@@ -120,7 +120,7 @@ class AIEM_Workflows {
 			}
 
 			$delay_seconds = self::delay_to_seconds( (int) $wf->delay_value, $wf->delay_unit );
-			$scheduled_at  = date( 'Y-m-d H:i:s', time() + $delay_seconds );
+			$scheduled_at  = gmdate( 'Y-m-d H:i:s', time() + $delay_seconds );
 
 			$count = 0;
 			foreach ( $subscribers as $sub ) {

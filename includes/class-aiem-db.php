@@ -1224,7 +1224,7 @@ class AIEM_DB {
 				"SELECT * FROM {$wpdb->prefix}aiem_workflow_queue
 				 WHERE status = 'pending' AND scheduled_at <= %s
 				 ORDER BY scheduled_at ASC LIMIT %d",
-				current_time( 'mysql' ), $limit
+				gmdate( 'Y-m-d H:i:s' ), $limit
 			)
 		) ?: [];
 	}
