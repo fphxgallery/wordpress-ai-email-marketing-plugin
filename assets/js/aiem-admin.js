@@ -951,9 +951,9 @@ jQuery(function ($) {
 				return '<div style="text-align:' + ea(p.align||'center') + ';margin:0 0 20px;">' +
 					'<a href="' + ea(p.url||'#') + '" style="display:inline-block;background-color:' + ea(p.bg_color||'#7c3aed') + ';color:' + ea(p.text_color||'#ffffff') + ';padding:14px 32px;border-radius:6px;text-decoration:none;font-weight:600;font-family:Arial,Helvetica,sans-serif;font-size:16px;">' + eh(p.text||'Click Here') + '</a></div>';
 			case 'image':
-				if (!p.src) return '';
+				var iSrc = p.src || '';
 				var iAlign = p.align === 'center' ? 'margin:0 auto;' : (p.align === 'right' ? 'margin-left:auto;' : '');
-				var img = '<img src="' + ea(p.src) + '" alt="' + ea(p.alt||'') + '" style="max-width:' + ea(p.width||'100%') + ';height:auto;display:block;' + iAlign + '" />';
+				var img = '<img src="' + ea(iSrc) + '" alt="' + ea(p.alt||'') + '" style="max-width:' + ea(p.width||'100%') + ';height:auto;display:block;' + iAlign + '" />';
 				if (p.link_url) img = '<a href="' + ea(p.link_url) + '">' + img + '</a>';
 				return '<div style="margin:0 0 16px;">' + img + '</div>';
 			case 'divider':

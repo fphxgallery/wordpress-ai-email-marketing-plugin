@@ -15,6 +15,7 @@ An OpenAI-powered email marketing plugin for WordPress. Build and send campaigns
 
 ## Changelog
 
+- **1.1.5** — Fix image blocks with no URL being silently dropped from template HTML (AI had nothing to fill). AI system prompt now explicitly instructs replacement of all placeholder text and footer content, and populates empty image src attributes.
 - **1.1.4** — Workflows with zero delay now fire immediately on the subscribe request instead of waiting up to 5 minutes for cron. Delayed workflows still queue for cron as before.
 - **1.1.3** — Fix cron schedule registration order (`cron_schedules` filter now registered in constructor, not inside `init` callback). Add **Process Queue Now** button to Workflows page to manually flush pending workflow emails without relying on WP-Cron.
 - **1.1.2** — Fix workflow queue items never processing when WordPress timezone differs from server PHP timezone. `scheduled_at` was stored with `date()` (server tz) but compared against `current_time('mysql')` (WP tz). Both now use `gmdate()` / UTC consistently.

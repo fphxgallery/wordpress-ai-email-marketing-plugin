@@ -21,7 +21,9 @@ class AIEM_OpenAI {
 			$body_instructions = 'You are an expert email marketing copywriter. You will be given an HTML email template and a content brief. '
 				. 'Fill the template with compelling, conversion-focused copy based on the brief. '
 				. 'Preserve ALL HTML structure, inline CSS, layout, and design elements exactly as-is. '
-				. 'Only replace visible text content and image src/alt attributes. '
+				. 'Replace ALL visible placeholder text with real content — this includes generic labels such as "fillmorephx title", "product title", "product text", "Your footer", "Your Heading", "Your text goes here", "Click Here", and any other placeholder-style text. '
+				. 'For image tags: if src is empty or missing, find a relevant publicly accessible image URL and set it; also set a descriptive alt attribute. '
+				. 'For footer sections: write a short professional footer with the site name, a brief tagline or contact note, and the current year. '
 				. 'Exception: if multiple products are provided and the template contains a single product section (a repeated block pattern such as a product card, row, or section), '
 				. 'duplicate that block pattern once per additional product so every product gets its own section. Keep all other structure unchanged. '
 				. 'Return the complete filled template as the html field.';
