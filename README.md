@@ -15,6 +15,7 @@ An OpenAI-powered email marketing plugin for WordPress. Build and send campaigns
 
 ## Changelog
 
+- **1.2.1** — Multi-product template layout: AI now treats everything before the first `<hr>` as the product block and everything after the last `<hr>` as the footer. Additional products are inserted between dividers, footer stays at the end.
 - **1.2.0** — Fix template HTML being silently stripped on save. `wp_kses_post()` was filtering inline CSS properties and empty `<img src="">` tags it deemed unsafe. Replaced with `wp_unslash()` on all admin-only HTML save paths (templates, campaigns, workflows — all require `manage_options`).
 - **1.1.9** — Add Reset to Default buttons for System Prompt and Template System Prompt in Settings → OpenAI.
 - **1.1.8** — Fix backslash in subject/preview text (WordPress magic quotes on POST data — add `wp_unslash()` before sanitization across all campaign and workflow save paths). Fix AI stripping button styles — explicitly instruct AI to preserve styled anchor tag attributes verbatim.

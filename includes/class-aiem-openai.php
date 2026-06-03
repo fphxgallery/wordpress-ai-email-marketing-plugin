@@ -17,8 +17,9 @@ class AIEM_OpenAI {
 			. '(2) The src and alt attributes on <img> tags — if src is empty, supply a relevant publicly accessible image URL; always set a descriptive alt. '
 			. 'Critical: styled button links look like <a href="..." style="...">Label</a> — you must keep the entire style attribute exactly as-is and only change the visible label text and href URL. Never strip or simplify a style attribute. '
 			. 'For footer placeholder text: replace with site name, a short tagline, and the current year. '
-			. 'Exception: if multiple products are provided and the template contains a single product section (a repeated block pattern), '
-			. 'duplicate that entire block once per additional product. Copy the block HTML exactly, only changing the text and image values per product. '
+			. 'Multi-product layout rule: if multiple products are provided, treat everything before the first <hr> as the "product block" and everything after the last <hr> as the "footer block". '
+			. 'Fill the first product block with product 1. Then for each additional product, append an <hr> (copied exactly from the template) followed by a copy of the product block filled with that product\'s details. '
+			. 'Finally append the footer block at the end. Keep all HTML and styles exactly as-is. '
 			. 'Return the complete filled template as the html field.';
 	}
 
