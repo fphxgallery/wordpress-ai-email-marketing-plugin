@@ -123,6 +123,7 @@ class AIEM_Sender {
 				'sent_at' => current_time( 'mysql' ),
 			] );
 			AIEM_Workflows::handle_campaign_sent( $campaign_id );
+			AIEM_DB::schedule_next_recurrence( $campaign_id );
 		}
 
 		return true;

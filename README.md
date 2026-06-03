@@ -15,6 +15,7 @@ An OpenAI-powered email marketing plugin for WordPress. Build and send campaigns
 
 ## Changelog
 
+- **1.0.2** — Major feature release: Visual Email Editor with reusable block templates, audience segmentation, subscribe form builder (GDPR + custom success messages), double opt-in, bounce tracking, expanded automation workflows, and resend-to-non-openers. **Reliability fix:** campaigns, email templates, forms, subscribers, lists, and segments now save correctly on SQLite when content contains single quotes/apostrophes (AI-generated email copy, names like O'Brien) by routing inserts/updates through raw PDO binding, matching the existing workflow path.
 - **1.0.1** — Add Info page (first-time setup guide) under Settings. AI generation now produces subject line and preview text in addition to email body. Recurring campaigns auto-regenerate subject, preview text, and body from the saved prompt at each send cycle. Plugin author updated to @fPHXGallery.
 - **1.0.0** — Initial release.
 

@@ -53,6 +53,13 @@ class AIEM_Workflows {
 			return;
 		}
 
+		$campaign = AIEM_DB::get_campaign( $campaign_id );
+		$context  = [
+			'campaign_subject' => $campaign->subject ?? '',
+			'campaign_count'   => count( $sent_subscriber_ids ),
+			'campaign_date'    => current_time( 'Y-m-d H:i' ),
+		];
+
 		foreach ( $workflows as $wf ) {
 			$config            = json_decode( $wf->trigger_config ?? '{}', true );
 			$filter_campaign   = (int) ( $config['filter_campaign_id'] ?? 0 );
@@ -66,7 +73,7 @@ class AIEM_Workflows {
 			$scheduled_at  = date( 'Y-m-d H:i:s', time() + $delay_seconds );
 
 			foreach ( $sent_subscriber_ids as $subscriber_id ) {
-				$queued = AIEM_DB::insert_workflow_queue( (int) $wf->id, $subscriber_id, $scheduled_at );
+				$queued = AIEM_DB::insert_workflow_queue( (int) $wf->id, $subscriber_id, $scheduled_at, 0, $context );
 				if ( $queued ) {
 					AIEM_Logs::log( AIEM_Logs::EVENT_WORKFLOW_QUEUED, [
 						'subscriber_id' => $subscriber_id,
@@ -117,7 +124,7 @@ class AIEM_Workflows {
 
 			$count = 0;
 			foreach ( $subscribers as $sub ) {
-				$queued = AIEM_DB::insert_workflow_queue( (int) $wf->id, (int) $sub->id, $scheduled_at );
+				$queued = AIEM_DB::insert_workflow_queue( (int) $wf->id, (int) $sub->id, $scheduled_at, (int) $post->ID );
 				if ( $queued ) {
 					$count++;
 				}
@@ -157,7 +164,9 @@ class AIEM_Workflows {
 				$sent       = false;
 
 				if ( $subscriber && $subscriber->status === 'subscribed' ) {
-					$sent = self::send_inline_email( $wf, $subscriber );
+					$post    = ( (int) $item->post_id ) ? get_post( (int) $item->post_id ) : null;
+					$context = json_decode( $item->context ?? '{}', true ) ?: [];
+					$sent    = self::send_inline_email( $wf, $subscriber, $post instanceof WP_Post ? $post : null, $context );
 				}
 
 				AIEM_DB::update_workflow_queue_item( (int) $item->id, [
@@ -178,10 +187,18 @@ class AIEM_Workflows {
 		}
 	}
 
-	private static function send_inline_email( object $wf, object $subscriber ): bool {
+	private static function send_inline_email( object $wf, object $subscriber, ?WP_Post $post = null, array $context = [] ): bool {
 		$send_to = self::replace_subscriber_tags( $wf->action_send_to ?: '{{EMAIL}}', $subscriber );
 		$subject = self::replace_subscriber_tags( $wf->action_subject, $subscriber );
 		$content = self::replace_subscriber_tags( $wf->action_content, $subscriber );
+
+		if ( $post instanceof WP_Post ) {
+			$subject = self::replace_post_tags( $subject, $post );
+			$content = self::replace_post_tags( $content, $post );
+		}
+
+		$subject = self::replace_context_tags( $subject, $context );
+		$content = self::replace_context_tags( $content, $context );
 
 		if ( ! $send_to || ! $subject || ! $content ) {
 			return false;
@@ -227,6 +244,18 @@ class AIEM_Workflows {
 		return str_replace(
 			[ '{{post_title}}', '{{post_url}}', '{{post_excerpt}}', '{{post_author}}' ],
 			[ esc_html( $post->post_title ), esc_url( get_permalink( $post->ID ) ), esc_html( $excerpt ), esc_html( $author ) ],
+			$text
+		);
+	}
+
+	private static function replace_context_tags( string $text, array $context ): string {
+		return str_replace(
+			[ '{{DATE}}',                          '{{SUBJECT}}',                              '{{COUNT}}' ],
+			[
+				$context['campaign_date']    ?? current_time( 'Y-m-d H:i' ),
+				$context['campaign_subject'] ?? '',
+				(string) ( $context['campaign_count'] ?? '' ),
+			],
 			$text
 		);
 	}

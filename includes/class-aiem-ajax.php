@@ -9,6 +9,7 @@ class AIEM_Ajax {
 	public function __construct() {
 		$admin_actions = [
 			'aiem_generate_email',
+			'aiem_generate_subject',
 			'aiem_send_campaign',
 			'aiem_schedule_campaign',
 			'aiem_import_subscribers',
@@ -93,6 +94,63 @@ class AIEM_Ajax {
 			'subject'      => $result['subject'],
 			'preview_text' => $result['preview_text'],
 			'html'         => $result['html'],
+		] );
+	}
+
+	public function generate_subject(): void {
+		$this->verify_admin();
+
+		$prompt = sanitize_textarea_field( $_POST['prompt'] ?? '' );
+		if ( ! $prompt ) {
+			wp_send_json_error( [ 'message' => 'Prompt is required.' ] );
+		}
+
+		$api_key = get_option( 'aiem_openai_key', '' );
+		if ( ! $api_key ) {
+			wp_send_json_error( [ 'message' => 'OpenAI API key not configured.' ] );
+		}
+
+		$model = get_option( 'aiem_openai_model', 'gpt-4o' );
+
+		$system_prompt = "You are an expert email marketing copywriter. "
+			. "Respond with a single JSON object (no markdown, no code fences) containing exactly two keys:\n"
+			. "  \"subject\"      — a compelling email subject line (under 60 characters)\n"
+			. "  \"preview_text\" — inbox preview text that complements the subject (under 100 characters)";
+
+		$body = wp_json_encode( [
+			'model'       => $model,
+			'messages'    => [
+				[ 'role' => 'system', 'content' => $system_prompt ],
+				[ 'role' => 'user',   'content' => $prompt ],
+			],
+			'max_tokens'  => 200,
+			'temperature' => 0.8,
+		] );
+
+		$response = wp_remote_post( 'https://api.openai.com/v1/chat/completions', [
+			'headers' => [
+				'Authorization' => 'Bearer ' . $api_key,
+				'Content-Type'  => 'application/json',
+			],
+			'body'    => $body,
+			'timeout' => 30,
+		] );
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( [ 'message' => $response->get_error_message() ] );
+		}
+
+		$data    = json_decode( wp_remote_retrieve_body( $response ), true );
+		$content = $data['choices'][0]['message']['content'] ?? '';
+		$parsed  = json_decode( $content, true );
+
+		if ( ! is_array( $parsed ) ) {
+			wp_send_json_error( [ 'message' => 'Could not parse response.' ] );
+		}
+
+		wp_send_json_success( [
+			'subject'      => $parsed['subject']      ?? '',
+			'preview_text' => $parsed['preview_text'] ?? '',
 		] );
 	}
 

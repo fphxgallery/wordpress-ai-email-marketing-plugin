@@ -4,6 +4,76 @@ jQuery(function ($) {
 
 	var campaignId = parseInt($('#aiem-campaign-id').val() || '0', 10);
 
+	// ── Char counters ───────────────────────────────────────────────────
+
+	function initCharCounter($input, limit) {
+		var $counter = $('<span class="aiem-char-counter"></span>').css({
+			marginLeft: '8px', fontSize: '12px', color: '#888'
+		});
+		$input.after($counter);
+		function update() {
+			var len = $input.val().length;
+			$counter.text(len + ' / ' + limit);
+			$counter.css('color', len > limit ? '#dc2626' : '#888');
+		}
+		$input.on('input', update);
+		update();
+	}
+
+	if ($('#aiem-subject').length)   initCharCounter($('#aiem-subject'),   60);
+	if ($('#aiem-preheader').length) initCharCounter($('#aiem-preheader'), 100);
+
+	// ── Regen subject & preview only ────────────────────────────────────
+
+	$('#aiem-regen-subject-btn').on('click', function () {
+		var prompt = $('#aiem-ai-prompt').val().trim();
+		if (!prompt) {
+			$('#aiem-generate-status').text('Please enter a prompt first.');
+			return;
+		}
+		$('#aiem-regen-subject-btn').prop('disabled', true);
+		$('#aiem-generate-spinner').show();
+		$('#aiem-generate-status').text('Regenerating subject & preview…');
+		$.post(aiemAdmin.ajaxUrl, {
+			action: 'aiem_generate_subject',
+			nonce:  aiemAdmin.nonce,
+			prompt: prompt,
+		}, function (res) {
+			$('#aiem-regen-subject-btn').prop('disabled', false);
+			$('#aiem-generate-spinner').hide();
+			if (res.success) {
+				if (res.data.subject)      { $('#aiem-subject').val(res.data.subject).trigger('input'); }
+				if (res.data.preview_text) { $('#aiem-preheader').val(res.data.preview_text).trigger('input'); }
+				$('#aiem-generate-status').text('Subject & preview regenerated.');
+			} else {
+				$('#aiem-generate-status').text('Error: ' + res.data.message);
+			}
+		}).fail(function () {
+			$('#aiem-regen-subject-btn').prop('disabled', false);
+			$('#aiem-generate-spinner').hide();
+			$('#aiem-generate-status').text('Request failed.');
+		});
+	});
+
+	// ── Auto-save draft ─────────────────────────────────────────────────
+
+	if (campaignId) {
+		setInterval(function () {
+			if (!campaignId) { return; }
+			doSave(function (res) {
+				if (res && res.success) {
+					var $status = $('#aiem-autosave-status');
+					if (!$status.length) {
+						$status = $('<span id="aiem-autosave-status" style="margin-left:12px;font-size:12px;color:#888;"></span>');
+						$('#aiem-save-btn').after($status);
+					}
+					var now = new Date();
+					$status.text('Auto-saved ' + now.toLocaleTimeString());
+				}
+			});
+		}, 60000);
+	}
+
 	// ── Generate email ──────────────────────────────────────────────────
 
 	$('#aiem-generate-btn').on('click', function () {

@@ -6,18 +6,42 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class AIEM_WooCommerce {
 
-	public static function get_recent_products(): array {
+	public static function get_recent_products( array $category_ids = [], array $tag_ids = [] ): array {
 		if ( ! function_exists( 'wc_get_products' ) ) {
 			return [];
 		}
 
-		$count    = (int) get_option( 'aiem_product_count', 5 );
-		$products = wc_get_products( [
+		$count = (int) get_option( 'aiem_product_count', 5 );
+		$args  = [
 			'status'  => 'publish',
 			'orderby' => 'date',
 			'order'   => 'DESC',
 			'limit'   => $count,
-		] );
+		];
+
+		$tax_query = [];
+		if ( ! empty( $category_ids ) ) {
+			$tax_query[] = [
+				'taxonomy' => 'product_cat',
+				'field'    => 'term_id',
+				'terms'    => array_map( 'intval', $category_ids ),
+			];
+		}
+		if ( ! empty( $tag_ids ) ) {
+			$tax_query[] = [
+				'taxonomy' => 'product_tag',
+				'field'    => 'term_id',
+				'terms'    => array_map( 'intval', $tag_ids ),
+			];
+		}
+		if ( count( $tax_query ) > 1 ) {
+			$tax_query['relation'] = 'AND';
+		}
+		if ( $tax_query ) {
+			$args['tax_query'] = $tax_query;
+		}
+
+		$products = wc_get_products( $args );
 
 		$result = [];
 		foreach ( $products as $product ) {
@@ -34,5 +58,27 @@ class AIEM_WooCommerce {
 		}
 
 		return $result;
+	}
+
+	public static function get_product_categories(): array {
+		if ( ! function_exists( 'wc_get_products' ) ) {
+			return [];
+		}
+		return get_terms( [
+			'taxonomy'   => 'product_cat',
+			'hide_empty' => false,
+			'orderby'    => 'name',
+		] ) ?: [];
+	}
+
+	public static function get_product_tags(): array {
+		if ( ! function_exists( 'wc_get_products' ) ) {
+			return [];
+		}
+		return get_terms( [
+			'taxonomy'   => 'product_tag',
+			'hide_empty' => false,
+			'orderby'    => 'name',
+		] ) ?: [];
 	}
 }

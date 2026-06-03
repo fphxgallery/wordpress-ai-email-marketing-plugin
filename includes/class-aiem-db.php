@@ -48,6 +48,8 @@ class AIEM_DB {
 			id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
 			workflow_id bigint(20) UNSIGNED NOT NULL,
 			subscriber_id bigint(20) UNSIGNED NOT NULL,
+			post_id bigint(20) UNSIGNED NOT NULL DEFAULT 0,
+			context text NOT NULL DEFAULT '{}',
 			scheduled_at datetime NOT NULL,
 			status varchar(20) NOT NULL DEFAULT 'pending',
 			processed_at datetime DEFAULT NULL,
@@ -94,6 +96,9 @@ class AIEM_DB {
 			ai_prompt text NOT NULL,
 			from_name varchar(200) NOT NULL DEFAULT '',
 			from_email varchar(200) NOT NULL DEFAULT '',
+			recur_schedule varchar(20) NOT NULL DEFAULT '',
+			woo_category_ids text NOT NULL,
+			woo_tag_ids text NOT NULL,
 			scheduled_at datetime DEFAULT NULL,
 			sent_at datetime DEFAULT NULL,
 			created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -171,6 +176,26 @@ class AIEM_DB {
 		dbDelta( $email_templates_sql );
 
 		update_option( 'aiem_db_version', AIEM_VERSION );
+		self::maybe_migrate_queue_table();
+	}
+
+	public static function maybe_migrate_queue_table(): void {
+		if ( ! isset( $GLOBALS['@pdo'] ) ) {
+			return;
+		}
+		/** @var \PDO $pdo */
+		$pdo  = $GLOBALS['@pdo'];
+		global $wpdb;
+		$table = $wpdb->prefix . 'aiem_workflow_queue';
+		$cols  = array_column(
+			$pdo->query( "PRAGMA table_info(`{$table}`)" )->fetchAll( \PDO::FETCH_ASSOC ),
+			'name'
+		);
+		foreach ( [ 'post_id' => "INTEGER NOT NULL DEFAULT 0", 'context' => "TEXT NOT NULL DEFAULT '{}'" ] as $col => $def ) {
+			if ( ! in_array( $col, $cols, true ) ) {
+				$pdo->exec( "ALTER TABLE `{$table}` ADD COLUMN `{$col}` {$def}" );
+			}
+		}
 	}
 
 	// ── Lists ──────────────────────────────────────────────────────────────
@@ -195,19 +220,23 @@ class AIEM_DB {
 
 	public static function create_list( string $name, string $description = '' ): int|false {
 		global $wpdb;
-		$result = $wpdb->insert(
-			"{$wpdb->prefix}aiem_lists",
-			[ 'name' => $name, 'description' => $description ],
-			[ '%s', '%s' ]
-		);
+		$row = [ 'name' => $name, 'description' => $description ];
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_insert( $wpdb->prefix . 'aiem_lists', $row );
+		}
+		$result = $wpdb->insert( "{$wpdb->prefix}aiem_lists", $row, [ '%s', '%s' ] );
 		return $result ? $wpdb->insert_id : false;
 	}
 
 	public static function update_list( int $id, string $name, string $description = '' ): bool {
 		global $wpdb;
+		$update = [ 'name' => $name, 'description' => $description ];
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_update( $wpdb->prefix . 'aiem_lists', $update, [ 'id' => $id ] );
+		}
 		return (bool) $wpdb->update(
 			"{$wpdb->prefix}aiem_lists",
-			[ 'name' => $name, 'description' => $description ],
+			$update,
 			[ 'id' => $id ],
 			[ '%s', '%s' ],
 			[ '%d' ]
@@ -300,6 +329,11 @@ class AIEM_DB {
 		if ( ! empty( $data['confirm_key'] ) ) {
 			$row['confirm_key'] = $data['confirm_key'];
 			$formats[]          = '%s';
+		}
+
+		// Names like O'Brien contain apostrophes that break $wpdb->insert on SQLite.
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_insert( $wpdb->prefix . 'aiem_subscribers', $row );
 		}
 
 		$wpdb->suppress_errors( true );
@@ -420,22 +454,33 @@ class AIEM_DB {
 
 	public static function create_campaign( array $data ): int|false {
 		global $wpdb;
+		$row = [
+			'name'         => sanitize_text_field( $data['name'] ?? '' ),
+			'subject'      => sanitize_text_field( $data['subject'] ?? '' ),
+			'preheader'    => sanitize_text_field( $data['preheader'] ?? '' ),
+			'list_id'      => (int) ( $data['list_id'] ?? 0 ),
+			'segment_id'   => (int) ( $data['segment_id'] ?? 0 ),
+			'status'       => 'draft',
+			'html_content'   => $data['html_content'] ?? '',
+			'blocks'         => $data['blocks'] ?? '[]',
+			'ai_prompt'      => sanitize_textarea_field( $data['ai_prompt'] ?? '' ),
+			'from_name'      => sanitize_text_field( $data['from_name'] ?? '' ),
+			'from_email'     => sanitize_email( $data['from_email'] ?? '' ),
+			'recur_schedule'   => sanitize_text_field( $data['recur_schedule'] ?? '' ),
+			'woo_category_ids' => $data['woo_category_ids'] ?? '[]',
+			'woo_tag_ids'      => $data['woo_tag_ids'] ?? '[]',
+		];
+
+		// SQLite parser fails on single-quoted content via $wpdb->insert; AI email
+		// HTML routinely contains apostrophes. Use raw PDO when on SQLite.
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_insert( $wpdb->prefix . 'aiem_campaigns', $row );
+		}
+
 		$result = $wpdb->insert(
 			"{$wpdb->prefix}aiem_campaigns",
-			[
-				'name'         => sanitize_text_field( $data['name'] ?? '' ),
-				'subject'      => sanitize_text_field( $data['subject'] ?? '' ),
-				'preheader'    => sanitize_text_field( $data['preheader'] ?? '' ),
-				'list_id'      => (int) ( $data['list_id'] ?? 0 ),
-				'segment_id'   => (int) ( $data['segment_id'] ?? 0 ),
-				'status'       => 'draft',
-				'html_content' => $data['html_content'] ?? '',
-				'blocks'       => $data['blocks'] ?? '[]',
-				'ai_prompt'    => sanitize_textarea_field( $data['ai_prompt'] ?? '' ),
-				'from_name'    => sanitize_text_field( $data['from_name'] ?? '' ),
-				'from_email'   => sanitize_email( $data['from_email'] ?? '' ),
-			],
-			[ '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ]
+			$row,
+			[ '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
 		);
 		return $result ? $wpdb->insert_id : false;
 	}
@@ -461,10 +506,13 @@ class AIEM_DB {
 
 	public static function update_campaign( int $id, array $data ): bool {
 		global $wpdb;
-		$allowed = [ 'name', 'subject', 'preheader', 'list_id', 'segment_id', 'status', 'html_content', 'blocks', 'ai_prompt', 'from_name', 'from_email', 'scheduled_at', 'sent_at' ];
+		$allowed = [ 'name', 'subject', 'preheader', 'list_id', 'segment_id', 'status', 'html_content', 'blocks', 'ai_prompt', 'from_name', 'from_email', 'scheduled_at', 'sent_at', 'recur_schedule', 'woo_category_ids', 'woo_tag_ids' ];
 		$update  = array_intersect_key( $data, array_flip( $allowed ) );
 		if ( empty( $update ) ) {
 			return false;
+		}
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_update( $wpdb->prefix . 'aiem_campaigns', $update, [ 'id' => $id ] );
 		}
 		return (bool) $wpdb->update( "{$wpdb->prefix}aiem_campaigns", $update, [ 'id' => $id ] );
 	}
@@ -480,6 +528,40 @@ class AIEM_DB {
 		}
 		$wpdb->delete( "{$wpdb->prefix}aiem_sends", [ 'campaign_id' => $id ], [ '%d' ] );
 		return (bool) $wpdb->delete( "{$wpdb->prefix}aiem_campaigns", [ 'id' => $id ], [ '%d' ] );
+	}
+
+	public static function clear_sends( int $id ): void {
+		global $wpdb;
+		$send_ids = $wpdb->get_col(
+			$wpdb->prepare( "SELECT id FROM {$wpdb->prefix}aiem_sends WHERE campaign_id = %d", $id )
+		);
+		if ( $send_ids ) {
+			$in = implode( ',', array_map( 'intval', $send_ids ) );
+			$wpdb->query( "DELETE FROM {$wpdb->prefix}aiem_click_events WHERE send_id IN ($in)" );
+		}
+		$wpdb->delete( "{$wpdb->prefix}aiem_sends", [ 'campaign_id' => $id ], [ '%d' ] );
+	}
+
+	public static function schedule_next_recurrence( int $id ): void {
+		$campaign = self::get_campaign( $id );
+		if ( ! $campaign || ! $campaign->recur_schedule ) {
+			return;
+		}
+		$intervals = [
+			'daily'   => '+1 day',
+			'weekly'  => '+7 days',
+			'monthly' => '+1 month',
+		];
+		$offset = $intervals[ $campaign->recur_schedule ] ?? null;
+		if ( ! $offset ) {
+			return;
+		}
+		$next = date( 'Y-m-d H:i:s', strtotime( $offset, current_time( 'timestamp' ) ) );
+		self::clear_sends( $id );
+		self::update_campaign( $id, [
+			'status'       => 'scheduled',
+			'scheduled_at' => $next,
+		] );
 	}
 
 	// ── Sends ──────────────────────────────────────────────────────────────
@@ -592,6 +674,21 @@ class AIEM_DB {
 		);
 	}
 
+	public static function get_click_breakdown( int $campaign_id ): array {
+		global $wpdb;
+		return $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT ce.url, COUNT(*) AS clicks
+				 FROM {$wpdb->prefix}aiem_click_events ce
+				 JOIN {$wpdb->prefix}aiem_sends s ON s.id = ce.send_id
+				 WHERE s.campaign_id = %d
+				 GROUP BY ce.url
+				 ORDER BY clicks DESC",
+				$campaign_id
+			)
+		) ?: [];
+	}
+
 	public static function record_click( string $key, string $url ): void {
 		global $wpdb;
 		$send = self::get_send_by_tracking_key( $key );
@@ -621,17 +718,19 @@ class AIEM_DB {
 			$wpdb->prepare(
 				"SELECT
 					COUNT(*) AS total,
-					SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent,
-					SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-					SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) AS bounced,
-					SUM(CASE WHEN open_count > 0 THEN 1 ELSE 0 END) AS opened,
-					SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked
-				 FROM {$wpdb->prefix}aiem_sends
-				 WHERE campaign_id = %d",
+					SUM(CASE WHEN s.status = 'sent' THEN 1 ELSE 0 END) AS sent,
+					SUM(CASE WHEN s.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+					SUM(CASE WHEN s.status = 'bounced' THEN 1 ELSE 0 END) AS bounced,
+					SUM(CASE WHEN s.open_count > 0 THEN 1 ELSE 0 END) AS opened,
+					SUM(CASE WHEN s.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
+					SUM(CASE WHEN sub.status = 'unsubscribed' THEN 1 ELSE 0 END) AS unsubscribed
+				 FROM {$wpdb->prefix}aiem_sends s
+				 JOIN {$wpdb->prefix}aiem_subscribers sub ON sub.id = s.subscriber_id
+				 WHERE s.campaign_id = %d",
 				$campaign_id
 			)
 		);
-		return $row ?: (object) [ 'total' => 0, 'sent' => 0, 'failed' => 0, 'bounced' => 0, 'opened' => 0, 'clicked' => 0 ];
+		return $row ?: (object) [ 'total' => 0, 'sent' => 0, 'failed' => 0, 'bounced' => 0, 'opened' => 0, 'clicked' => 0, 'unsubscribed' => 0 ];
 	}
 
 	public static function get_sends_for_campaign( int $campaign_id ): array {
@@ -741,13 +840,17 @@ class AIEM_DB {
 
 	public static function create_segment( array $data ): int|false {
 		global $wpdb;
+		$row = [
+			'name'    => sanitize_text_field( $data['name'] ?? '' ),
+			'list_id' => (int) ( $data['list_id'] ?? 0 ),
+			'filters' => wp_json_encode( $data['filters'] ?? [] ),
+		];
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_insert( $wpdb->prefix . 'aiem_segments', $row );
+		}
 		$result = $wpdb->insert(
 			"{$wpdb->prefix}aiem_segments",
-			[
-				'name'    => sanitize_text_field( $data['name'] ?? '' ),
-				'list_id' => (int) ( $data['list_id'] ?? 0 ),
-				'filters' => wp_json_encode( $data['filters'] ?? [] ),
-			],
+			$row,
 			[ '%s', '%d', '%s' ]
 		);
 		return $result ? $wpdb->insert_id : false;
@@ -760,6 +863,9 @@ class AIEM_DB {
 		if ( isset( $data['list_id'] ) ) $update['list_id'] = (int) $data['list_id'];
 		if ( isset( $data['filters'] ) ) $update['filters'] = wp_json_encode( $data['filters'] );
 		if ( empty( $update ) ) return false;
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_update( $wpdb->prefix . 'aiem_segments', $update, [ 'id' => $id ] );
+		}
 		return (bool) $wpdb->update( "{$wpdb->prefix}aiem_segments", $update, [ 'id' => $id ] );
 	}
 
@@ -890,13 +996,17 @@ class AIEM_DB {
 
 	public static function create_email_template( array $data ): int|false {
 		global $wpdb;
+		$row = [
+			'name'         => sanitize_text_field( $data['name'] ?? '' ),
+			'blocks'       => $data['blocks'] ?? '[]',
+			'html_content' => $data['html_content'] ?? '',
+		];
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_insert( $wpdb->prefix . 'aiem_email_templates', $row );
+		}
 		$result = $wpdb->insert(
 			"{$wpdb->prefix}aiem_email_templates",
-			[
-				'name'         => sanitize_text_field( $data['name'] ?? '' ),
-				'blocks'       => $data['blocks'] ?? '[]',
-				'html_content' => $data['html_content'] ?? '',
-			],
+			$row,
 			[ '%s', '%s', '%s' ]
 		);
 		return $result ? $wpdb->insert_id : false;
@@ -907,6 +1017,9 @@ class AIEM_DB {
 		$allowed = [ 'name', 'blocks', 'html_content' ];
 		$update  = array_intersect_key( $data, array_flip( $allowed ) );
 		if ( empty( $update ) ) return false;
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_update( $wpdb->prefix . 'aiem_email_templates', $update, [ 'id' => $id ] );
+		}
 		return (bool) $wpdb->update( "{$wpdb->prefix}aiem_email_templates", $update, [ 'id' => $id ] );
 	}
 
@@ -936,14 +1049,18 @@ class AIEM_DB {
 
 	public static function create_form( array $data ): int|false {
 		global $wpdb;
+		$row = [
+			'name'     => sanitize_text_field( $data['name'] ?? '' ),
+			'list_id'  => (int) ( $data['list_id'] ?? 0 ),
+			'fields'   => wp_json_encode( $data['fields'] ?? [] ),
+			'settings' => wp_json_encode( $data['settings'] ?? [] ),
+		];
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_insert( $wpdb->prefix . 'aiem_forms', $row );
+		}
 		$result = $wpdb->insert(
 			"{$wpdb->prefix}aiem_forms",
-			[
-				'name'     => sanitize_text_field( $data['name'] ?? '' ),
-				'list_id'  => (int) ( $data['list_id'] ?? 0 ),
-				'fields'   => wp_json_encode( $data['fields'] ?? [] ),
-				'settings' => wp_json_encode( $data['settings'] ?? [] ),
-			],
+			$row,
 			[ '%s', '%d', '%s', '%s' ]
 		);
 		return $result ? $wpdb->insert_id : false;
@@ -957,6 +1074,9 @@ class AIEM_DB {
 		if ( isset( $data['fields'] ) )   $update['fields']   = wp_json_encode( $data['fields'] );
 		if ( isset( $data['settings'] ) ) $update['settings'] = wp_json_encode( $data['settings'] );
 		if ( empty( $update ) ) return false;
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_update( $wpdb->prefix . 'aiem_forms', $update, [ 'id' => $id ] );
+		}
 		return (bool) $wpdb->update( "{$wpdb->prefix}aiem_forms", $update, [ 'id' => $id ] );
 	}
 
@@ -993,23 +1113,32 @@ class AIEM_DB {
 
 	public static function create_workflow( array $data ): int|false {
 		global $wpdb;
+		$row = [
+			'name'                 => sanitize_text_field( $data['name'] ?? '' ),
+			'trigger_type'         => sanitize_text_field( $data['trigger_type'] ?? '' ),
+			'trigger_config'       => wp_json_encode( $data['trigger_config'] ?? [] ),
+			'action_type'          => 'send_email',
+			'action_campaign_id'   => (int) ( $data['action_campaign_id'] ?? 0 ),
+			'action_send_to'       => sanitize_text_field( $data['action_send_to'] ?? '{{EMAIL}}' ),
+			'action_subject'       => sanitize_text_field( $data['action_subject'] ?? '' ),
+			'action_content'       => wp_kses_post( $data['action_content'] ?? '' ),
+			'action_list_id'       => (int) ( $data['action_list_id'] ?? 0 ),
+			'action_email_styling' => in_array( $data['action_email_styling'] ?? '', [ 'none', 'default' ] ) ? $data['action_email_styling'] : 'none',
+			'delay_value'          => max( 0, (int) ( $data['delay_value'] ?? 0 ) ),
+			'delay_unit'           => in_array( $data['delay_unit'] ?? '', [ 'minutes', 'hours', 'days' ] ) ? $data['delay_unit'] : 'minutes',
+			'status'               => 'active',
+		];
+
+		// The SQLite integration's MySQL parser fails on addslashes()-escaped values
+		// produced by $wpdb->insert() when content contains single quotes. Use raw
+		// PDO binding to bypass the translation layer when running on SQLite.
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_insert( $wpdb->prefix . 'aiem_workflows', $row );
+		}
+
 		$result = $wpdb->insert(
 			"{$wpdb->prefix}aiem_workflows",
-			[
-				'name'                 => sanitize_text_field( $data['name'] ?? '' ),
-				'trigger_type'         => sanitize_text_field( $data['trigger_type'] ?? '' ),
-				'trigger_config'       => wp_json_encode( $data['trigger_config'] ?? [] ),
-				'action_type'          => 'send_email',
-				'action_campaign_id'   => (int) ( $data['action_campaign_id'] ?? 0 ),
-				'action_send_to'       => sanitize_text_field( $data['action_send_to'] ?? '{{EMAIL}}' ),
-				'action_subject'       => sanitize_text_field( $data['action_subject'] ?? '' ),
-				'action_content'       => wp_kses_post( $data['action_content'] ?? '' ),
-				'action_list_id'       => (int) ( $data['action_list_id'] ?? 0 ),
-				'action_email_styling' => in_array( $data['action_email_styling'] ?? '', [ 'none', 'default' ] ) ? $data['action_email_styling'] : 'none',
-				'delay_value'          => max( 0, (int) ( $data['delay_value'] ?? 0 ) ),
-				'delay_unit'           => in_array( $data['delay_unit'] ?? '', [ 'minutes', 'hours', 'days' ] ) ? $data['delay_unit'] : 'minutes',
-				'status'               => 'active',
-			],
+			$row,
 			[ '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%d', '%s', '%s' ]
 		);
 		return $result ? $wpdb->insert_id : false;
@@ -1019,7 +1148,45 @@ class AIEM_DB {
 		global $wpdb;
 		$allowed = [ 'name', 'trigger_type', 'trigger_config', 'action_campaign_id', 'action_send_to', 'action_subject', 'action_content', 'action_list_id', 'action_email_styling', 'delay_value', 'delay_unit', 'status' ];
 		$update  = array_intersect_key( $data, array_flip( $allowed ) );
+
+		if ( isset( $update['trigger_config'] ) && is_array( $update['trigger_config'] ) ) {
+			$update['trigger_config'] = wp_json_encode( $update['trigger_config'] );
+		}
+
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_update( $wpdb->prefix . 'aiem_workflows', $update, [ 'id' => $id ] );
+		}
+
 		return (bool) $wpdb->update( "{$wpdb->prefix}aiem_workflows", $update, [ 'id' => $id ] );
+	}
+
+	private static function pdo_insert( string $table, array $row ): int|false {
+		/** @var \PDO $pdo */
+		$pdo  = $GLOBALS['@pdo'];
+		$cols = '`' . implode( '`, `', array_keys( $row ) ) . '`';
+		$ph   = implode( ', ', array_fill( 0, count( $row ), '?' ) );
+		try {
+			$stmt = $pdo->prepare( "INSERT INTO `{$table}` ({$cols}) VALUES ({$ph})" );
+			if ( $stmt && $stmt->execute( array_values( $row ) ) ) {
+				return (int) $pdo->lastInsertId();
+			}
+		} catch ( \Exception $e ) {
+			return false;
+		}
+		return false;
+	}
+
+	private static function pdo_update( string $table, array $data, array $where ): bool {
+		/** @var \PDO $pdo */
+		$pdo = $GLOBALS['@pdo'];
+		$set = implode( ', ', array_map( fn( $col ) => "`{$col}` = ?", array_keys( $data ) ) );
+		$whr = implode( ' AND ', array_map( fn( $col ) => "`{$col}` = ?", array_keys( $where ) ) );
+		try {
+			$stmt = $pdo->prepare( "UPDATE `{$table}` SET {$set} WHERE {$whr}" );
+			return $stmt && $stmt->execute( [ ...array_values( $data ), ...array_values( $where ) ] );
+		} catch ( \Exception $e ) {
+			return false;
+		}
 	}
 
 	public static function delete_workflow( int $id ): bool {
@@ -1030,18 +1197,23 @@ class AIEM_DB {
 
 	// ── Workflow Queue ─────────────────────────────────────────────────────
 
-	public static function insert_workflow_queue( int $workflow_id, int $subscriber_id, string $scheduled_at ): int|false {
+	public static function insert_workflow_queue( int $workflow_id, int $subscriber_id, string $scheduled_at, int $post_id = 0, array $context = [] ): int|false {
+		$row = [
+			'workflow_id'   => $workflow_id,
+			'subscriber_id' => $subscriber_id,
+			'post_id'       => $post_id,
+			'context'       => wp_json_encode( $context ),
+			'scheduled_at'  => $scheduled_at,
+			'status'        => 'pending',
+		];
+
 		global $wpdb;
-		$result = $wpdb->insert(
-			"{$wpdb->prefix}aiem_workflow_queue",
-			[
-				'workflow_id'   => $workflow_id,
-				'subscriber_id' => $subscriber_id,
-				'scheduled_at'  => $scheduled_at,
-				'status'        => 'pending',
-			],
-			[ '%d', '%d', '%s', '%s' ]
-		);
+
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_insert( $wpdb->prefix . 'aiem_workflow_queue', $row );
+		}
+
+		$result = $wpdb->insert( "{$wpdb->prefix}aiem_workflow_queue", $row, [ '%d', '%d', '%d', '%s', '%s', '%s' ] );
 		return $result ? $wpdb->insert_id : false;
 	}
 

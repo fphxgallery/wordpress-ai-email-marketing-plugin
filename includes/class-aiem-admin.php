@@ -1007,6 +1007,7 @@ class AIEM_Admin {
 						<?php endif; ?>
 						<br />
 						<button type="button" id="aiem-generate-btn" class="button button-primary">Generate with AI</button>
+						<button type="button" id="aiem-regen-subject-btn" class="button" style="margin-left:8px;" title="Regenerate subject &amp; preview text only — leaves email body untouched">↻ Subject &amp; Preview Only</button>
 						<span id="aiem-generate-spinner" class="aiem-spinner" style="display:none;"></span>
 						<span id="aiem-generate-status"></span>
 					</div>
@@ -1339,6 +1340,7 @@ class AIEM_Admin {
 		$campaign    = $campaign_id ? AIEM_DB::get_campaign( $campaign_id ) : null;
 		$stats       = $campaign_id ? AIEM_DB::get_campaign_stats( $campaign_id ) : null;
 		$sends       = $campaign_id ? AIEM_DB::get_sends_for_campaign( $campaign_id ) : [];
+		$click_links = $campaign_id ? AIEM_DB::get_click_breakdown( $campaign_id ) : [];
 		?>
 		<div class="wrap aiem-wrap">
 			<h1>Reports</h1>
@@ -1358,17 +1360,21 @@ class AIEM_Admin {
 			<?php if ( $campaign && $stats ) : ?>
 			<div class="aiem-stats-grid">
 				<?php
-				$open_rate  = $stats->sent > 0 ? round( $stats->opened / $stats->sent * 100, 1 ) : 0;
-				$click_rate = $stats->sent > 0 ? round( $stats->clicked / $stats->sent * 100, 1 ) : 0;
+				$open_rate   = $stats->sent > 0 ? round( $stats->opened / $stats->sent * 100, 1 ) : 0;
+				$click_rate  = $stats->sent > 0 ? round( $stats->clicked / $stats->sent * 100, 1 ) : 0;
+				$unsub_count = $stats->unsubscribed ?? 0;
+				$unsub_rate  = $stats->sent > 0 ? round( $unsub_count / $stats->sent * 100, 1 ) : 0;
 				$stat_items = [
-					'Total'    => $stats->total,
-					'Sent'     => $stats->sent,
-					'Failed'   => $stats->failed,
-					'Bounced'  => $stats->bounced ?? 0,
-					'Opens'    => $stats->opened,
-					'Open Rate'=> $open_rate . '%',
-					'Clicks'   => $stats->clicked,
-					'Click Rate' => $click_rate . '%',
+					'Total'       => $stats->total,
+					'Sent'        => $stats->sent,
+					'Failed'      => $stats->failed,
+					'Bounced'     => $stats->bounced ?? 0,
+					'Opens'       => $stats->opened,
+					'Open Rate'   => $open_rate . '%',
+					'Clicks'      => $stats->clicked,
+					'Click Rate'  => $click_rate . '%',
+					'Unsubs'      => $unsub_count,
+					'Unsub Rate'  => $unsub_rate . '%',
 				];
 				foreach ( $stat_items as $label => $value ) : ?>
 					<div class="aiem-stat-card">
@@ -1408,6 +1414,24 @@ class AIEM_Admin {
 				</tbody>
 			</table>
 			<?php endif; ?>
+
+			<?php if ( ! empty( $click_links ) ) : ?>
+			<h3>Link Clicks</h3>
+			<table class="wp-list-table widefat fixed striped aiem-table">
+				<thead>
+					<tr><th>URL</th><th style="width:80px">Clicks</th></tr>
+				</thead>
+				<tbody>
+				<?php foreach ( $click_links as $link ) : ?>
+					<tr>
+						<td><a href="<?php echo esc_url( $link->url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $link->url ); ?></a></td>
+						<td><?php echo (int) $link->clicks; ?></td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+			<?php endif; ?>
+
 			<?php endif; ?>
 		</div>
 		<?php
