@@ -7,23 +7,27 @@ if ( ! defined( 'ABSPATH' ) ) {
 class AIEM_Cron {
 
 	public function __construct() {
+		// Register custom intervals immediately so they're available for both
+		// wp_schedule_event() validation and wp-cron.php execution contexts.
+		add_filter( 'cron_schedules', [ $this, 'add_schedules' ] );
+
 		add_action( 'aiem_process_batch',      [ $this, 'process_batch' ] );
 		add_action( 'aiem_check_scheduled',    [ $this, 'check_scheduled' ] );
 		add_action( 'aiem_process_workflows',  [ $this, 'process_workflows' ] );
 		add_action( 'init',                    [ $this, 'register_schedules' ] );
 	}
 
-	public function register_schedules(): void {
-		add_filter( 'cron_schedules', function ( array $schedules ): array {
-			if ( ! isset( $schedules['aiem_15min'] ) ) {
-				$schedules['aiem_15min'] = [ 'interval' => 900,  'display' => '15 Minutes' ];
-			}
-			if ( ! isset( $schedules['aiem_5min'] ) ) {
-				$schedules['aiem_5min']  = [ 'interval' => 300,  'display' => '5 Minutes' ];
-			}
-			return $schedules;
-		} );
+	public function add_schedules( array $schedules ): array {
+		if ( ! isset( $schedules['aiem_15min'] ) ) {
+			$schedules['aiem_15min'] = [ 'interval' => 900, 'display' => '15 Minutes' ];
+		}
+		if ( ! isset( $schedules['aiem_5min'] ) ) {
+			$schedules['aiem_5min'] = [ 'interval' => 300, 'display' => '5 Minutes' ];
+		}
+		return $schedules;
+	}
 
+	public function register_schedules(): void {
 		if ( ! wp_next_scheduled( 'aiem_check_scheduled' ) ) {
 			wp_schedule_event( time(), 'aiem_15min', 'aiem_check_scheduled' );
 		}

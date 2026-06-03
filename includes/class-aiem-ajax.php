@@ -29,6 +29,7 @@ class AIEM_Ajax {
 			'aiem_delete_email_template',
 			'aiem_resend_non_openers',
 			'aiem_resend_campaign',
+			'aiem_process_workflow_queue',
 		];
 
 		foreach ( $admin_actions as $action ) {
@@ -876,5 +877,14 @@ class AIEM_Ajax {
 
 		wp_schedule_single_event( time() + 2, 'aiem_process_batch', [ $campaign_id ] );
 		wp_send_json_success( [ 'message' => "Re-sending to {$count} subscriber(s). Processing in background.", 'count' => $count ] );
+	}
+
+	public function process_workflow_queue(): void {
+		$this->verify_admin();
+		$items_before = count( AIEM_DB::get_due_workflow_queue( 100 ) );
+		AIEM_Workflows::process_queue();
+		$items_after = count( AIEM_DB::get_due_workflow_queue( 100 ) );
+		$processed   = $items_before - $items_after;
+		wp_send_json_success( [ 'message' => "Processed {$processed} queued item(s). Check Logs for results." ] );
 	}
 }

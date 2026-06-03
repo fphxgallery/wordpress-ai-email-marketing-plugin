@@ -15,6 +15,7 @@ An OpenAI-powered email marketing plugin for WordPress. Build and send campaigns
 
 ## Changelog
 
+- **1.1.3** — Fix cron schedule registration order (`cron_schedules` filter now registered in constructor, not inside `init` callback). Add **Process Queue Now** button to Workflows page to manually flush pending workflow emails without relying on WP-Cron.
 - **1.1.2** — Fix workflow queue items never processing when WordPress timezone differs from server PHP timezone. `scheduled_at` was stored with `date()` (server tz) but compared against `current_time('mysql')` (WP tz). Both now use `gmdate()` / UTC consistently.
 - **1.1.1** — Fix activation error on MySQL < 8.0.13: remove DEFAULT values from TEXT/LONGTEXT columns in CREATE TABLE statements (`trigger_config`, `action_send_to`, `action_subject`, `action_content`, `context`, `filters`). MySQL 5.7 and strict-mode MySQL 8.0 reject TEXT DEFAULT at schema creation time.
 - **1.1.0** — AI generation can now follow an Email Editor template: select a template from the "Load from Email Editor" dropdown before clicking Generate and the AI fills your brand layout instead of producing free-form HTML. Multiple WooCommerce products each get their own duplicated product section. Max output tokens is now configurable in Settings (default 2500; template mode uses at least 4000). Character counters on subject/preview text, auto-save draft, regenerate subject+preview only, unsubscribe rate column and per-link click breakdown on Reports.

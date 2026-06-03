@@ -517,7 +517,7 @@ class AIEM_Admin {
 		$categories = get_categories( [ 'hide_empty' => false, 'orderby' => 'name', 'order' => 'ASC' ] );
 		?>
 		<div class="wrap aiem-wrap">
-			<h1>Workflows</h1>
+			<h1>Workflows <button type="button" id="aiem-process-queue-btn" class="button" style="margin-left:12px;font-size:13px;">Process Queue Now</button> <span id="aiem-process-queue-result" style="font-size:13px;margin-left:8px;color:#555;"></span></h1>
 			<?php $this->show_notice(); ?>
 
 			<div class="aiem-two-col">

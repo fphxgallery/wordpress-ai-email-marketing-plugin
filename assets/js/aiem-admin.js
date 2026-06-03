@@ -1117,6 +1117,27 @@ jQuery(function ($) {
 		});
 	});
 
+	// Workflows: process queue now
+	$('#aiem-process-queue-btn').on('click', function () {
+		var btn = $(this);
+		btn.prop('disabled', true).text('Processing…');
+		$('#aiem-process-queue-result').text('');
+		$.post(aiemAdmin.ajaxUrl, {
+			action: 'aiem_process_workflow_queue',
+			nonce:  aiemAdmin.nonce,
+		}, function (res) {
+			btn.prop('disabled', false).text('Process Queue Now');
+			if (res.success) {
+				$('#aiem-process-queue-result').text(res.data.message);
+			} else {
+				$('#aiem-process-queue-result').text('Error: ' + (res.data ? res.data.message : 'unknown'));
+			}
+		}).fail(function () {
+			btn.prop('disabled', false).text('Process Queue Now');
+			$('#aiem-process-queue-result').text('Request failed.');
+		});
+	});
+
 	// Email Editor: delete template
 	$(document).on('click', '.aiem-tpl-delete', function () {
 		if (!confirm('Delete this template?')) { return; }
