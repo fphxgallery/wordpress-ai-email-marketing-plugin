@@ -1467,6 +1467,13 @@ class AIEM_Admin {
 						</td>
 					</tr>
 					<tr>
+						<th>Max Output Tokens</th>
+						<td>
+							<input type="number" name="aiem_max_tokens" value="<?php echo (int) get_option( 'aiem_max_tokens', 2500 ); ?>" min="500" max="8000" class="small-text" />
+							<p class="description">Default: 2500. When generating from a template, this is raised to 4000 automatically if below that.</p>
+						</td>
+					</tr>
+					<tr>
 						<th>System Prompt</th>
 						<td>
 							<textarea name="aiem_system_prompt" rows="5" class="large-text"><?php echo esc_textarea( get_option( 'aiem_system_prompt', 'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.' ) ); ?></textarea>
@@ -1762,6 +1769,7 @@ class AIEM_Admin {
 		$options = [
 			'aiem_openai_key'       => sanitize_text_field( $_POST['aiem_openai_key'] ?? '' ),
 			'aiem_openai_model'     => sanitize_text_field( $_POST['aiem_openai_model'] ?? 'gpt-4o' ),
+			'aiem_max_tokens'       => max( 500, min( 8000, (int) ( $_POST['aiem_max_tokens'] ?? 2500 ) ) ),
 			'aiem_system_prompt'    => sanitize_textarea_field( $_POST['aiem_system_prompt'] ?? '' ),
 			'aiem_from_name'        => sanitize_text_field( $_POST['aiem_from_name'] ?? '' ),
 			'aiem_from_email'       => sanitize_email( $_POST['aiem_from_email'] ?? '' ),
@@ -1865,7 +1873,7 @@ class AIEM_Admin {
 				<h2>Step 6 — Create Your First Campaign</h2>
 				<p>Go to <strong>Campaigns → New Campaign</strong>. Fill in the campaign name, then choose an audience (a list or a segment). From there:</p>
 				<ul style="list-style:disc;margin-left:1.5em">
-					<li><strong>With AI:</strong> type a brief in the <em>AI Content Generator</em> box and click <em>Generate with AI</em>. The subject line, preview text, and email body will all be filled in automatically. Review and edit before sending.</li>
+					<li><strong>With AI:</strong> type a brief in the <em>AI Content Generator</em> box and click <em>Generate with AI</em>. The subject line, preview text, and email body will all be filled in automatically. Review and edit before sending. <strong>Tip:</strong> select a template from the <em>Load from Email Editor</em> dropdown first — the AI will fill that template's layout with your content instead of generating free-form HTML, keeping your brand design intact.</li>
 					<li><strong>Manually:</strong> type your subject line, preview text, and paste or write HTML directly in the email content area. Use the <em>Email Editor</em> to build a reusable template and load it here.</li>
 				</ul>
 				<p>When ready, click <em>Send Now</em>, or set a date/time and click <em>Schedule</em>. For recurring campaigns (daily/weekly/monthly), each send cycle will regenerate the subject, preview text, and body from your prompt automatically — so the content stays fresh without any manual work.</p>

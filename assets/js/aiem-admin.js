@@ -95,6 +95,7 @@ jQuery(function ($) {
 			campaign_id:      campaignId,
 			woo_category_ids: JSON.stringify($('#aiem-woo-category-ids').val() || []),
 			woo_tag_ids:      JSON.stringify($('#aiem-woo-tag-ids').val() || []),
+			template_id:      $('#aiem-load-template').val() || 0,
 		}, function (res) {
 			$('#aiem-generate-btn').prop('disabled', false);
 			$('#aiem-generate-spinner').hide();

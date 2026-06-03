@@ -74,7 +74,16 @@ class AIEM_Ajax {
 			$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
 		}
 
-		$result = AIEM_OpenAI::generate( $prompt, $products );
+		$template_html = '';
+		$template_id   = (int) ( $_POST['template_id'] ?? 0 );
+		if ( $template_id ) {
+			$tpl = AIEM_DB::get_email_template( $template_id );
+			if ( $tpl && ! empty( $tpl->html_content ) ) {
+				$template_html = $tpl->html_content;
+			}
+		}
+
+		$result = AIEM_OpenAI::generate( $prompt, $products, $template_html );
 
 		if ( is_wp_error( $result ) ) {
 			wp_send_json_error( [ 'message' => $result->get_error_message() ] );

@@ -9,7 +9,7 @@ class AIEM_OpenAI {
 	/**
 	 * Returns array{ subject: string, preview_text: string, html: string } or WP_Error.
 	 */
-	public static function generate( string $prompt, array $products = [] ): array|WP_Error {
+	public static function generate( string $prompt, array $products = [], string $template_html = '' ): array|WP_Error {
 		$api_key = get_option( 'aiem_openai_key', '' );
 		if ( ! $api_key ) {
 			return new WP_Error( 'no_key', 'OpenAI API key not configured.' );
@@ -17,10 +17,20 @@ class AIEM_OpenAI {
 
 		$model = get_option( 'aiem_openai_model', 'gpt-4o' );
 
-		$body_instructions = get_option(
-			'aiem_system_prompt',
-			'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.'
-		);
+		if ( $template_html ) {
+			$body_instructions = 'You are an expert email marketing copywriter. You will be given an HTML email template and a content brief. '
+				. 'Fill the template with compelling, conversion-focused copy based on the brief. '
+				. 'Preserve ALL HTML structure, inline CSS, layout, and design elements exactly as-is. '
+				. 'Only replace visible text content and image src/alt attributes. '
+				. 'Exception: if multiple products are provided and the template contains a single product section (a repeated block pattern such as a product card, row, or section), '
+				. 'duplicate that block pattern once per additional product so every product gets its own section. Keep all other structure unchanged. '
+				. 'Return the complete filled template as the html field.';
+		} else {
+			$body_instructions = get_option(
+				'aiem_system_prompt',
+				'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.'
+			);
+		}
 
 		$system_prompt = $body_instructions . "\n\n"
 			. "Always respond with a single JSON object (no markdown, no code fences) containing exactly three keys:\n"
@@ -29,6 +39,10 @@ class AIEM_OpenAI {
 			. "  \"html\"         — the full HTML email body as described above";
 
 		$user_content = $prompt;
+
+		if ( $template_html ) {
+			$user_content .= "\n\nEmail template to fill:\n" . $template_html;
+		}
 
 		if ( ! empty( $products ) ) {
 			$user_content .= "\n\nFeatured products to highlight:\n";
@@ -50,7 +64,7 @@ class AIEM_OpenAI {
 				[ 'role' => 'system', 'content' => $system_prompt ],
 				[ 'role' => 'user',   'content' => $user_content ],
 			],
-			'max_tokens'  => 2500,
+			'max_tokens'  => $template_html ? max( 4000, (int) get_option( 'aiem_max_tokens', 2500 ) ) : (int) get_option( 'aiem_max_tokens', 2500 ),
 			'temperature' => 0.7,
 		] );
 
