@@ -363,7 +363,7 @@ class AIEM_Ajax {
 		$this->verify_admin();
 
 		$id          = (int) ( $_POST['campaign_id'] ?? 0 );
-		$html        = wp_kses_post( wp_unslash( $_POST['html_content'] ?? '' ) );
+		$html        = wp_unslash( $_POST['html_content'] ?? '' );
 		$name        = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
 		$subject     = sanitize_text_field( wp_unslash( $_POST['subject'] ?? '' ) );
 		$preheader   = sanitize_text_field( wp_unslash( $_POST['preheader'] ?? '' ) );
@@ -434,11 +434,11 @@ class AIEM_Ajax {
 		$this->verify_admin();
 
 		$id    = (int) ( $_POST['template_id'] ?? 0 );
-		$name  = sanitize_text_field( $_POST['name'] ?? '' );
+		$name  = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
 		$raw   = wp_unslash( $_POST['blocks'] ?? '[]' );
 		$arr   = json_decode( $raw, true );
 		$blocks = is_array( $arr ) ? wp_json_encode( $arr ) : '[]';
-		$html  = wp_kses_post( $_POST['html_content'] ?? '' );
+		$html  = wp_unslash( $_POST['html_content'] ?? '' );
 
 		if ( ! $name ) {
 			wp_send_json_error( [ 'message' => 'Template name is required.' ] );
@@ -651,7 +651,7 @@ class AIEM_Ajax {
 
 		$send_to  = sanitize_text_field( wp_unslash( $_POST['action_send_to'] ?? '{{EMAIL}}' ) );
 		$subject  = sanitize_text_field( wp_unslash( $_POST['action_subject'] ?? '' ) );
-		$content  = wp_kses_post( wp_unslash( $_POST['action_content'] ?? '' ) );
+		$content  = wp_unslash( $_POST['action_content'] ?? '' );
 		$list_id  = (int) ( $_POST['action_list_id'] ?? 0 );
 		$styling  = sanitize_text_field( wp_unslash( $_POST['action_email_styling'] ?? 'none' ) );
 
