@@ -27,6 +27,7 @@ class AIEM_Ajax {
 			'aiem_save_email_template',
 			'aiem_delete_email_template',
 			'aiem_resend_non_openers',
+			'aiem_resend_campaign',
 		];
 
 		foreach ( $admin_actions as $action ) {
@@ -55,7 +56,22 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'Prompt is required.' ] );
 		}
 
-		$products = $use_woo ? AIEM_WooCommerce::get_recent_products() : [];
+		$products = [];
+		if ( $use_woo ) {
+			$raw_cats = wp_unslash( $_POST['woo_category_ids'] ?? '[]' );
+			$raw_tags = wp_unslash( $_POST['woo_tag_ids'] ?? '[]' );
+			$cat_ids  = array_filter( array_map( 'intval', json_decode( $raw_cats, true ) ?: [] ) );
+			$tag_ids  = array_filter( array_map( 'intval', json_decode( $raw_tags, true ) ?: [] ) );
+
+			if ( empty( $cat_ids ) ) {
+				$cat_ids = array_filter( array_map( 'intval', json_decode( get_option( 'aiem_woo_categories', '[]' ), true ) ?: [] ) );
+			}
+			if ( empty( $tag_ids ) ) {
+				$tag_ids = array_filter( array_map( 'intval', json_decode( get_option( 'aiem_woo_tags', '[]' ), true ) ?: [] ) );
+			}
+
+			$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
+		}
 
 		$result = AIEM_OpenAI::generate( $prompt, $products );
 
@@ -64,10 +80,20 @@ class AIEM_Ajax {
 		}
 
 		if ( $campaign_id ) {
-			AIEM_DB::update_campaign( $campaign_id, [ 'ai_prompt' => $prompt ] );
+			$raw_cats = wp_unslash( $_POST['woo_category_ids'] ?? '[]' );
+			$raw_tags = wp_unslash( $_POST['woo_tag_ids'] ?? '[]' );
+			AIEM_DB::update_campaign( $campaign_id, [
+				'ai_prompt'        => $prompt,
+				'woo_category_ids' => wp_json_encode( array_filter( array_map( 'intval', json_decode( $raw_cats, true ) ?: [] ) ) ),
+				'woo_tag_ids'      => wp_json_encode( array_filter( array_map( 'intval', json_decode( $raw_tags, true ) ?: [] ) ) ),
+			] );
 		}
 
-		wp_send_json_success( [ 'html' => $result ] );
+		wp_send_json_success( [
+			'subject'      => $result['subject'],
+			'preview_text' => $result['preview_text'],
+			'html'         => $result['html'],
+		] );
 	}
 
 	public function send_campaign(): void {
@@ -282,17 +308,31 @@ class AIEM_Ajax {
 		$blocks_arr  = json_decode( $blocks_raw, true );
 		$blocks      = is_array( $blocks_arr ) ? wp_json_encode( $blocks_arr ) : '[]';
 
+		$recur_schedule = sanitize_text_field( $_POST['recur_schedule'] ?? '' );
+		$valid_recur    = [ '', 'daily', 'weekly', 'monthly' ];
+		if ( ! in_array( $recur_schedule, $valid_recur, true ) ) {
+			$recur_schedule = '';
+		}
+
+		$raw_cats        = wp_unslash( $_POST['woo_category_ids'] ?? '[]' );
+		$raw_tags        = wp_unslash( $_POST['woo_tag_ids'] ?? '[]' );
+		$woo_cat_ids     = wp_json_encode( array_filter( array_map( 'intval', json_decode( $raw_cats, true ) ?: [] ) ) );
+		$woo_tag_ids_enc = wp_json_encode( array_filter( array_map( 'intval', json_decode( $raw_tags, true ) ?: [] ) ) );
+
 		$data = [
-			'name'         => $name,
-			'subject'      => $subject,
-			'preheader'    => $preheader,
-			'list_id'      => $list_id,
-			'segment_id'   => $segment_id,
-			'html_content' => $html,
-			'blocks'       => $blocks,
-			'ai_prompt'    => $ai_prompt,
-			'from_name'    => $from_name,
-			'from_email'   => $from_email,
+			'name'             => $name,
+			'subject'          => $subject,
+			'preheader'        => $preheader,
+			'list_id'          => $list_id,
+			'segment_id'       => $segment_id,
+			'html_content'     => $html,
+			'blocks'           => $blocks,
+			'ai_prompt'        => $ai_prompt,
+			'from_name'        => $from_name,
+			'from_email'       => $from_email,
+			'recur_schedule'   => $recur_schedule,
+			'woo_category_ids' => $woo_cat_ids,
+			'woo_tag_ids'      => $woo_tag_ids_enc,
 		];
 
 		if ( $id ) {
@@ -740,5 +780,34 @@ class AIEM_Ajax {
 			'redirect' => admin_url( 'admin.php?page=aiem-campaign-edit&campaign_id=' . $new_id ),
 			'count'    => $count,
 		] );
+	}
+
+	public function resend_campaign(): void {
+		$this->verify_admin();
+
+		$campaign_id = (int) ( $_POST['campaign_id'] ?? 0 );
+		$campaign    = $campaign_id ? AIEM_DB::get_campaign( $campaign_id ) : null;
+
+		if ( ! $campaign ) {
+			wp_send_json_error( [ 'message' => 'Campaign not found.' ] );
+		}
+		if ( ! $campaign->html_content ) {
+			wp_send_json_error( [ 'message' => 'Campaign has no content.' ] );
+		}
+		if ( ! $campaign->list_id && ! $campaign->segment_id ) {
+			wp_send_json_error( [ 'message' => 'No audience selected.' ] );
+		}
+
+		AIEM_DB::clear_sends( $campaign_id );
+		AIEM_DB::update_campaign( $campaign_id, [ 'status' => 'sending', 'sent_at' => null ] );
+		$count = AIEM_Sender::enqueue_sends( $campaign_id );
+
+		if ( $count === 0 ) {
+			AIEM_DB::update_campaign( $campaign_id, [ 'status' => 'sent' ] );
+			wp_send_json_error( [ 'message' => 'No subscribed recipients found.' ] );
+		}
+
+		wp_schedule_single_event( time() + 2, 'aiem_process_batch', [ $campaign_id ] );
+		wp_send_json_success( [ 'message' => "Re-sending to {$count} subscriber(s). Processing in background.", 'count' => $count ] );
 	}
 }

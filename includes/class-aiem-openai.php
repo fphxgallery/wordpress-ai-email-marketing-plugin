@@ -6,7 +6,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class AIEM_OpenAI {
 
-	public static function generate( string $prompt, array $products = [] ): string|WP_Error {
+	/**
+	 * Returns array{ subject: string, preview_text: string, html: string } or WP_Error.
+	 */
+	public static function generate( string $prompt, array $products = [] ): array|WP_Error {
 		$api_key = get_option( 'aiem_openai_key', '' );
 		if ( ! $api_key ) {
 			return new WP_Error( 'no_key', 'OpenAI API key not configured.' );
@@ -14,10 +17,16 @@ class AIEM_OpenAI {
 
 		$model = get_option( 'aiem_openai_model', 'gpt-4o' );
 
-		$system_prompt = get_option(
+		$body_instructions = get_option(
 			'aiem_system_prompt',
 			'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.'
 		);
+
+		$system_prompt = $body_instructions . "\n\n"
+			. "Always respond with a single JSON object (no markdown, no code fences) containing exactly three keys:\n"
+			. "  \"subject\"      — a compelling email subject line (under 60 characters)\n"
+			. "  \"preview_text\" — inbox preview text that complements the subject (under 100 characters)\n"
+			. "  \"html\"         — the full HTML email body as described above";
 
 		$user_content = $prompt;
 
@@ -41,7 +50,7 @@ class AIEM_OpenAI {
 				[ 'role' => 'system', 'content' => $system_prompt ],
 				[ 'role' => 'user',   'content' => $user_content ],
 			],
-			'max_tokens'  => 2000,
+			'max_tokens'  => 2500,
 			'temperature' => 0.7,
 		] );
 
@@ -69,6 +78,22 @@ class AIEM_OpenAI {
 			return new WP_Error( 'openai_error', $msg );
 		}
 
-		return $data['choices'][0]['message']['content'] ?? '';
+		$raw     = $data['choices'][0]['message']['content'] ?? '';
+		$parsed  = json_decode( $raw, true );
+
+		if ( ! is_array( $parsed ) || empty( $parsed['html'] ) ) {
+			// Fallback: treat entire response as html body, leave subject/preview empty.
+			return [
+				'subject'      => '',
+				'preview_text' => '',
+				'html'         => $raw,
+			];
+		}
+
+		return [
+			'subject'      => $parsed['subject']      ?? '',
+			'preview_text' => $parsed['preview_text'] ?? '',
+			'html'         => $parsed['html']          ?? '',
+		];
 	}
 }

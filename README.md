@@ -4,14 +4,19 @@ An OpenAI-powered email marketing plugin for WordPress. Build and send campaigns
 
 ## Features
 
-- **Campaigns** — Create HTML email campaigns with AI-generated copy (OpenAI GPT-4o), preheader/preview text, schedule sends, and track opens/clicks
+- **Campaigns** — Create HTML email campaigns with AI-generated subject line, preview text, and body copy (OpenAI GPT-4o); schedule sends; recurring campaigns auto-regenerate fresh content each cycle
 - **Visual Email Editor** — Block-based drag-and-drop email builder (heading, text, button, image, divider, spacer) with reusable templates
 - **Subscriber Management** — Mailing lists, CSV import/export, double opt-in, bounce tracking, bulk actions, engagement history
 - **Audience Segmentation** — Named segments with filter conditions (status, engagement, date range) for targeted sends
-- **Subscribe Forms** — Drag-and-drop form builder with GDPR field and custom success messages; embed via shortcode
+- **Subscribe Forms** — Form builder with GDPR field and custom success messages; embed via shortcode
 - **Automation Workflows** — Trigger-based email sequences (subscribe, unsubscribe, post published, campaign sent) with optional delay
 - **Reports** — Per-campaign stats: sent, opens, open rate, clicks, click rate, failed; resend to non-openers
 - **WooCommerce Integration** — Pulls recent products into AI prompt context for product-focused campaigns
+
+## Changelog
+
+- **1.0.1** — Add Info page (first-time setup guide) under Settings. AI generation now produces subject line and preview text in addition to email body. Recurring campaigns auto-regenerate subject, preview text, and body from the saved prompt at each send cycle. Plugin author updated to @fPHXGallery.
+- **1.0.0** — Initial release.
 
 ## Requirements
 
@@ -50,6 +55,7 @@ An OpenAI-powered email marketing plugin for WordPress. Build and send campaigns
 | Logs | Filterable event log |
 | Email Editor | Visual block-based email template builder |
 | Settings | OpenAI config, sending defaults, double opt-in, bounce threshold, maintenance |
+| Info | First-time setup guide |
 
 ## License
 

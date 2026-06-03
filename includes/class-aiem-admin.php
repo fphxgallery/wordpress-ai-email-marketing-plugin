@@ -40,6 +40,7 @@ class AIEM_Admin {
 		add_submenu_page( 'aiem-dashboard', 'Logs',         'Logs',         'manage_options', 'aiem-logs',          [ $this, 'page_logs' ] );
 		add_submenu_page( 'aiem-dashboard', 'Email Editor', 'Email Editor', 'manage_options', 'aiem-email-editor',  [ $this, 'page_email_editor' ] );
 		add_submenu_page( 'aiem-dashboard', 'Settings',    'Settings',     'manage_options', 'aiem-settings',      [ $this, 'page_settings' ] );
+		add_submenu_page( 'aiem-dashboard', 'Info',        'Info',         'manage_options', 'aiem-info',           [ $this, 'page_info' ] );
 
 		add_submenu_page( null, 'Edit Campaign',       'Edit Campaign',       'manage_options', 'aiem-campaign-edit',       [ $this, 'page_campaign_edit' ] );
 		add_submenu_page( null, 'Edit Form',           'Edit Form',           'manage_options', 'aiem-form-edit',           [ $this, 'page_form_edit' ] );
@@ -521,8 +522,9 @@ class AIEM_Admin {
 
 			<div class="aiem-two-col">
 				<div>
-					<h3>Create Workflow</h3>
+					<h3 id="wf-form-heading">Create Workflow</h3>
 
+					<input type="hidden" id="wf-id" value="0" />
 					<input type="text" id="wf-name" class="regular-text" placeholder="e.g. Welcome New Subscriber" style="width:100%;margin-bottom:12px;font-size:15px;padding:8px 10px;" />
 
 					<div class="aiem-wf-section">
@@ -617,7 +619,7 @@ class AIEM_Admin {
 									<div style="margin-bottom:12px">
 										<label class="aiem-wf-field-label">Email content <span class="aiem-required">*</span></label>
 										<textarea id="wf-email-content" rows="8" style="width:100%;font-family:monospace;font-size:12px;line-height:1.5" placeholder="Enter email HTML or plain text…"></textarea>
-										<p class="description" style="margin-top:4px">Variables: <code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{email}}</code> <code>{{site_name}}</code> <code>{{site_url}}</code></p>
+										<p class="description" id="wf-content-vars" style="margin-top:4px">Variables: <code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{email}}</code> <code>{{site_name}}</code> <code>{{site_url}}</code> <code>{{DATE}}</code></p>
 									</div>
 
 									<div>
@@ -638,9 +640,10 @@ class AIEM_Admin {
 						</div>
 					</div>
 
-					<div style="margin-top:4px">
+					<div style="margin-top:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
 						<button type="button" id="wf-save-btn" class="button button-primary">Create Workflow</button>
-						<span id="wf-save-result" style="margin-left:10px;font-size:13px;"></span>
+						<button type="button" id="wf-cancel-btn" class="button" style="display:none">Cancel</button>
+						<span id="wf-save-result" style="font-size:13px;"></span>
 					</div>
 				</div>
 
@@ -695,6 +698,20 @@ class AIEM_Admin {
 									</span>
 								</td>
 								<td>
+									<button type="button" class="button-link aiem-wf-edit" data-wf="<?php echo esc_attr( wp_json_encode( [
+										'id'                   => (int) $wf->id,
+										'name'                 => $wf->name,
+										'trigger_type'         => $wf->trigger_type,
+										'trigger_config'       => json_decode( $wf->trigger_config ?? '{}', true ),
+										'action_send_to'       => $wf->action_send_to,
+										'action_subject'       => $wf->action_subject,
+										'action_content'       => $wf->action_content,
+										'action_email_styling' => $wf->action_email_styling,
+										'action_list_id'       => (int) $wf->action_list_id,
+										'delay_value'          => (int) $wf->delay_value,
+										'delay_unit'           => $wf->delay_unit,
+									] ) ); ?>">Edit</button>
+									&nbsp;|&nbsp;
 									<button type="button" class="button-link aiem-wf-toggle" data-id="<?php echo (int) $wf->id; ?>" data-status="<?php echo esc_attr( $wf->status ); ?>">
 										<?php echo $wf->status === 'active' ? 'Pause' : 'Activate'; ?>
 									</button>
@@ -824,6 +841,10 @@ class AIEM_Admin {
 							<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-reports&campaign_id=' . $c->id ) ); ?>">Report</a>
 							&nbsp;|&nbsp;
 							<a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=aiem_duplicate_campaign&campaign_id=' . $c->id ), 'aiem_duplicate_campaign_' . $c->id ) ); ?>">Duplicate</a>
+							<?php if ( in_array( $c->status, [ 'sent', 'sending' ], true ) ) : ?>
+							&nbsp;|&nbsp;
+							<a href="#" class="aiem-resend-link" data-campaign="<?php echo (int) $c->id; ?>">Re-send</a>
+							<?php endif; ?>
 							&nbsp;|&nbsp;
 							<a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=aiem_delete_campaign&campaign_id=' . $c->id ), 'aiem_delete_campaign_' . $c->id ) ); ?>"
 							   onclick="return confirm('Delete this campaign?');" class="aiem-danger">Delete</a>
@@ -921,11 +942,68 @@ class AIEM_Admin {
 						<h3>AI Content Generator</h3>
 						<p>Describe what this email should accomplish, and AI will generate the HTML content.</p>
 						<textarea id="aiem-ai-prompt" rows="4" class="large-text" placeholder="e.g. Promote our summer sale with 20% off all products. Create urgency. Target existing customers."><?php echo esc_textarea( $campaign->ai_prompt ?? '' ); ?></textarea>
-						<?php if ( $woo_active ) : ?>
+						<?php if ( $woo_active ) :
+							$woo_cats        = AIEM_WooCommerce::get_product_categories();
+							$woo_tags_list   = AIEM_WooCommerce::get_product_tags();
+							$camp_cat_ids    = json_decode( $campaign->woo_category_ids ?? '[]', true ) ?: [];
+							$camp_tag_ids    = json_decode( $campaign->woo_tag_ids ?? '[]', true ) ?: [];
+							$global_cat_ids  = json_decode( get_option( 'aiem_woo_categories', '[]' ), true ) ?: [];
+							$global_tag_ids  = json_decode( get_option( 'aiem_woo_tags', '[]' ), true ) ?: [];
+						?>
 							<label class="aiem-checkbox">
 								<input type="checkbox" id="aiem-use-woo" checked />
 								Include WooCommerce products (last <?php echo (int) get_option( 'aiem_product_count', 5 ); ?>)
 							</label>
+							<div id="aiem-woo-filters" style="margin-top:10px;padding:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;display:flex;gap:24px;flex-wrap:wrap;">
+								<?php if ( $woo_cats ) : ?>
+								<div>
+									<label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">
+										Filter by category
+										<?php if ( $global_cat_ids ) : ?>
+											<span style="font-weight:400;color:#6b7280">(global: <?php
+												$names = [];
+												foreach ( $woo_cats as $t ) {
+													if ( in_array( (int) $t->term_id, array_map( 'intval', $global_cat_ids ), true ) ) $names[] = esc_html( $t->name );
+												}
+												echo implode( ', ', $names );
+											?>)</span>
+										<?php endif; ?>
+									</label>
+									<select id="aiem-woo-category-ids" multiple size="4" style="min-width:180px">
+										<?php foreach ( $woo_cats as $term ) : ?>
+											<option value="<?php echo (int) $term->term_id; ?>" <?php echo in_array( (int) $term->term_id, array_map( 'intval', $camp_cat_ids ), true ) ? 'selected' : ''; ?>>
+												<?php echo esc_html( $term->name ); ?>
+											</option>
+										<?php endforeach; ?>
+									</select>
+									<p style="font-size:11px;color:#9ca3af;margin:3px 0 0">Override global default. None = use global.</p>
+								</div>
+								<?php endif; ?>
+								<?php if ( $woo_tags_list ) : ?>
+								<div>
+									<label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">
+										Filter by tag
+										<?php if ( $global_tag_ids ) : ?>
+											<span style="font-weight:400;color:#6b7280">(global: <?php
+												$names = [];
+												foreach ( $woo_tags_list as $t ) {
+													if ( in_array( (int) $t->term_id, array_map( 'intval', $global_tag_ids ), true ) ) $names[] = esc_html( $t->name );
+												}
+												echo implode( ', ', $names );
+											?>)</span>
+										<?php endif; ?>
+									</label>
+									<select id="aiem-woo-tag-ids" multiple size="4" style="min-width:180px">
+										<?php foreach ( $woo_tags_list as $term ) : ?>
+											<option value="<?php echo (int) $term->term_id; ?>" <?php echo in_array( (int) $term->term_id, array_map( 'intval', $camp_tag_ids ), true ) ? 'selected' : ''; ?>>
+												<?php echo esc_html( $term->name ); ?>
+											</option>
+										<?php endforeach; ?>
+									</select>
+									<p style="font-size:11px;color:#9ca3af;margin:3px 0 0">Override global default. None = use global.</p>
+								</div>
+								<?php endif; ?>
+							</div>
 						<?php endif; ?>
 						<br />
 						<button type="button" id="aiem-generate-btn" class="button button-primary">Generate with AI</button>
@@ -973,6 +1051,15 @@ class AIEM_Admin {
 						<span class="aiem-schedule-wrap">
 							<input type="datetime-local" id="aiem-scheduled-at" value="<?php echo esc_attr( ! empty( $campaign->scheduled_at ) ? date( 'Y-m-d\TH:i', strtotime( $campaign->scheduled_at ) ) : '' ); ?>" />
 							<button type="button" id="aiem-schedule-btn" class="button">Schedule</button>
+						</span>
+						<span class="aiem-recur-wrap" style="margin-left:12px;">
+							<label for="aiem-recur-schedule" style="font-size:13px;color:#374151;margin-right:4px;">Repeat:</label>
+							<select id="aiem-recur-schedule">
+								<option value="" <?php selected( $campaign->recur_schedule ?? '', '' ); ?>>None</option>
+								<option value="daily" <?php selected( $campaign->recur_schedule ?? '', 'daily' ); ?>>Daily</option>
+								<option value="weekly" <?php selected( $campaign->recur_schedule ?? '', 'weekly' ); ?>>Weekly</option>
+								<option value="monthly" <?php selected( $campaign->recur_schedule ?? '', 'monthly' ); ?>>Monthly</option>
+							</select>
 						</span>
 					</div>
 					<div id="aiem-action-result"></div>
@@ -1434,6 +1521,47 @@ class AIEM_Admin {
 							<p class="description">Number of recent WooCommerce products to pull into AI prompts.</p>
 						</td>
 					</tr>
+					<?php if ( function_exists( 'wc_get_products' ) ) :
+						$woo_cats     = AIEM_WooCommerce::get_product_categories();
+						$woo_tags     = AIEM_WooCommerce::get_product_tags();
+						$saved_cats   = json_decode( get_option( 'aiem_woo_categories', '[]' ), true ) ?: [];
+						$saved_tags   = json_decode( get_option( 'aiem_woo_tags', '[]' ), true ) ?: [];
+					?>
+					<tr>
+						<th>Default categories</th>
+						<td>
+							<?php if ( $woo_cats ) : ?>
+							<select name="aiem_woo_categories[]" multiple size="5" style="min-width:220px">
+								<?php foreach ( $woo_cats as $term ) : ?>
+									<option value="<?php echo (int) $term->term_id; ?>" <?php echo in_array( (int) $term->term_id, array_map( 'intval', $saved_cats ), true ) ? 'selected' : ''; ?>>
+										<?php echo esc_html( $term->name ); ?>
+									</option>
+								<?php endforeach; ?>
+							</select>
+							<p class="description">Hold Ctrl/Cmd to select multiple. Leave all unselected to include all categories.</p>
+							<?php else : ?>
+							<p class="description">No product categories found.</p>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
+						<th>Default tags</th>
+						<td>
+							<?php if ( $woo_tags ) : ?>
+							<select name="aiem_woo_tags[]" multiple size="5" style="min-width:220px">
+								<?php foreach ( $woo_tags as $term ) : ?>
+									<option value="<?php echo (int) $term->term_id; ?>" <?php echo in_array( (int) $term->term_id, array_map( 'intval', $saved_tags ), true ) ? 'selected' : ''; ?>>
+										<?php echo esc_html( $term->name ); ?>
+									</option>
+								<?php endforeach; ?>
+							</select>
+							<p class="description">Hold Ctrl/Cmd to select multiple. Leave all unselected to include all tags.</p>
+							<?php else : ?>
+							<p class="description">No product tags found.</p>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<?php endif; ?>
 				</table>
 
 				<p class="submit"><button type="submit" class="button button-primary">Save Settings</button></p>
@@ -1600,18 +1728,27 @@ class AIEM_Admin {
 			wp_die( 'Unauthorized.' );
 		}
 
+		$woo_cats_raw = isset( $_POST['aiem_woo_categories'] ) && is_array( $_POST['aiem_woo_categories'] )
+			? array_map( 'intval', $_POST['aiem_woo_categories'] )
+			: [];
+		$woo_tags_raw = isset( $_POST['aiem_woo_tags'] ) && is_array( $_POST['aiem_woo_tags'] )
+			? array_map( 'intval', $_POST['aiem_woo_tags'] )
+			: [];
+
 		$options = [
-			'aiem_openai_key'    => sanitize_text_field( $_POST['aiem_openai_key'] ?? '' ),
-			'aiem_openai_model'  => sanitize_text_field( $_POST['aiem_openai_model'] ?? 'gpt-4o' ),
-			'aiem_system_prompt' => sanitize_textarea_field( $_POST['aiem_system_prompt'] ?? '' ),
-			'aiem_from_name'     => sanitize_text_field( $_POST['aiem_from_name'] ?? '' ),
-			'aiem_from_email'    => sanitize_email( $_POST['aiem_from_email'] ?? '' ),
-			'aiem_default_list'  => (int) ( $_POST['aiem_default_list'] ?? 0 ),
-			'aiem_product_count' => max( 1, (int) ( $_POST['aiem_product_count'] ?? 5 ) ),
+			'aiem_openai_key'       => sanitize_text_field( $_POST['aiem_openai_key'] ?? '' ),
+			'aiem_openai_model'     => sanitize_text_field( $_POST['aiem_openai_model'] ?? 'gpt-4o' ),
+			'aiem_system_prompt'    => sanitize_textarea_field( $_POST['aiem_system_prompt'] ?? '' ),
+			'aiem_from_name'        => sanitize_text_field( $_POST['aiem_from_name'] ?? '' ),
+			'aiem_from_email'       => sanitize_email( $_POST['aiem_from_email'] ?? '' ),
+			'aiem_default_list'     => (int) ( $_POST['aiem_default_list'] ?? 0 ),
+			'aiem_product_count'    => max( 1, (int) ( $_POST['aiem_product_count'] ?? 5 ) ),
 			'aiem_double_optin'     => isset( $_POST['aiem_double_optin'] ) ? '1' : '0',
 			'aiem_bounce_threshold' => max( 1, (int) ( $_POST['aiem_bounce_threshold'] ?? 3 ) ),
 			'aiem_batch_size'       => max( 1, min( 500, (int) ( $_POST['aiem_batch_size'] ?? 50 ) ) ),
 			'aiem_batch_delay'      => max( 1, min( 300, (int) ( $_POST['aiem_batch_delay'] ?? 5 ) ) ),
+			'aiem_woo_categories'   => wp_json_encode( $woo_cats_raw ),
+			'aiem_woo_tags'         => wp_json_encode( $woo_tags_raw ),
 		];
 
 		foreach ( $options as $key => $value ) {
@@ -1654,6 +1791,79 @@ class AIEM_Admin {
 		];
 		[ $class, $label ] = $map[ $event_type ] ?? [ 'draft', $event_type ];
 		return '<span class="aiem-badge aiem-status-' . esc_attr( $class ) . '">' . esc_html( $label ) . '</span>';
+	}
+
+	public function page_info(): void {
+		?>
+		<div class="wrap aiem-wrap">
+			<h1>Info &amp; Setup Guide</h1>
+			<p>Follow these steps to get AI Email Marketing running on a fresh install.</p>
+
+			<div style="max-width:860px">
+
+				<h2>Step 1 — Configure Sending Defaults</h2>
+				<p>Go to <strong>AI Email Marketing → Settings</strong> and fill in:</p>
+				<ul style="list-style:disc;margin-left:1.5em">
+					<li><strong>Default From Name</strong> — the sender name subscribers will see (e.g. your brand name).</li>
+					<li><strong>Default From Email</strong> — must match a domain your host is authorised to send from; mismatches cause spam-folder delivery or rejection.</li>
+				</ul>
+				<p>WordPress sends mail via <code>wp_mail()</code>. For reliable delivery, install an SMTP plugin (e.g. WP Mail SMTP) and point it at a transactional mail service (SendGrid, Mailgun, Postmark, SES).</p>
+
+				<h2>Step 2 — Add an OpenAI API Key (optional)</h2>
+				<p>Under <strong>Settings → OpenAI</strong>, paste your API key. This unlocks AI-generated subject lines, preview text, and email body copy when you create or edit a campaign. Without a key the plugin still works — you just write copy manually.</p>
+				<ul style="list-style:disc;margin-left:1.5em">
+					<li>Get a key at <strong>platform.openai.com → API keys</strong>.</li>
+					<li>Default model is <code>gpt-4o</code>; switch to <code>gpt-4o-mini</code> for lower cost.</li>
+				</ul>
+				<p><strong>System Prompt vs. Campaign Prompt — what's the difference?</strong></p>
+				<p>There are two separate inputs that shape what the AI writes:</p>
+				<ul style="list-style:disc;margin-left:1.5em">
+					<li><strong>System Prompt (Settings → OpenAI)</strong> — set once, applies to every generation. Think of it as the AI copywriter's standing job description: output format, tone rules, brand voice, and HTML structure requirements. The default instructs the AI to return inline-styled HTML with a headline, intro paragraph, product highlights, and a CTA button. Customise it to match your brand — e.g. add your company name, preferred tone (formal/casual), or colour guidelines.</li>
+					<li><strong>AI Content Generator (Campaign edit page)</strong> — the per-campaign creative brief. Describe what <em>this specific email</em> should accomplish: what to promote, any offer or deadline, who the audience is, and the desired tone. Example: <em>"Promote our summer sale — 20% off all shoes. Create urgency around a 48-hour deadline. Friendly, energetic tone."</em> The AI uses your System Prompt as its instructions and your campaign prompt as the brief.</li>
+				</ul>
+				<p>A well-written System Prompt means you only need a short campaign prompt each time — the standing rules handle the rest.</p>
+
+				<h2>Step 3 — Create a Subscriber List</h2>
+				<p>Go to <strong>Audience → Lists</strong> and click <em>Add List</em>. Give it a name (e.g. "Newsletter"). Lists are containers for subscribers; you can have as many as you need and target them individually per campaign.</p>
+
+				<h2>Step 4 — Add a Signup Form</h2>
+				<p>Go to <strong>Forms</strong> and click <em>New Form</em>. Configure:</p>
+				<ul style="list-style:disc;margin-left:1.5em">
+					<li>Which list new subscribers are added to.</li>
+					<li>Whether to show a GDPR consent checkbox.</li>
+					<li>A custom success message.</li>
+				</ul>
+				<p>Once saved, copy the shortcode (e.g. <code>[aiem_form id="1"]</code>) and paste it into any page or widget area.</p>
+
+				<h2>Step 5 — Enable Double Opt-in (recommended)</h2>
+				<p>Under <strong>Settings → Subscriptions</strong>, tick <em>Double Opt-in</em>. New subscribers receive a confirmation email and stay <em>unconfirmed</em> until they click the link. Workflows and campaigns skip unconfirmed addresses, keeping your list clean and reducing spam complaints.</p>
+
+				<h2>Step 6 — Create Your First Campaign</h2>
+				<p>Go to <strong>Campaigns → New Campaign</strong>. Fill in the campaign name, then choose an audience (a list or a segment). From there:</p>
+				<ul style="list-style:disc;margin-left:1.5em">
+					<li><strong>With AI:</strong> type a brief in the <em>AI Content Generator</em> box and click <em>Generate with AI</em>. The subject line, preview text, and email body will all be filled in automatically. Review and edit before sending.</li>
+					<li><strong>Manually:</strong> type your subject line, preview text, and paste or write HTML directly in the email content area. Use the <em>Email Editor</em> to build a reusable template and load it here.</li>
+				</ul>
+				<p>When ready, click <em>Send Now</em>, or set a date/time and click <em>Schedule</em>. For recurring campaigns (daily/weekly/monthly), each send cycle will regenerate the subject, preview text, and body from your prompt automatically — so the content stays fresh without any manual work.</p>
+				<p>The plugin batches sends in the background — see <strong>Settings → Sending</strong> to tune batch size and delay if your host throttles outbound mail.</p>
+
+				<h2>Step 7 — Set Up Workflows (optional)</h2>
+				<p>Workflows let you trigger emails automatically. Go to <strong>Workflows → New Workflow</strong> and choose a trigger:</p>
+				<ul style="list-style:disc;margin-left:1.5em">
+					<li><strong>New subscriber</strong> — welcome email fires when someone confirms opt-in (or subscribes, if double opt-in is off).</li>
+					<li><strong>Post published</strong> — sends a notification email each time you publish a new post.</li>
+					<li><strong>WooCommerce purchase</strong> — fires after a completed order (requires WooCommerce).</li>
+				</ul>
+
+				<h2>Step 8 — Monitor Delivery</h2>
+				<p>Check <strong>Logs</strong> for per-send results and bounce counts. Subscribers that exceed the bounce threshold (default: 3) are automatically suppressed. Use <strong>Reports</strong> for aggregate stats.</p>
+
+				<hr style="margin:2em 0">
+				<p><strong>Need to customise email templates?</strong> Go to <strong>Email Editor</strong> to build reusable block-based templates, then load them into any campaign.</p>
+
+			</div>
+		</div>
+		<?php
 	}
 
 	private function pagination( int $total, int $per_page, int $current, array $query_args ): void {

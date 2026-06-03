@@ -39,9 +39,29 @@ class AIEM_Cron {
 	public function check_scheduled(): void {
 		$campaigns = AIEM_DB::get_scheduled_due();
 		foreach ( $campaigns as $campaign ) {
-			AIEM_DB::update_campaign( (int) $campaign->id, [ 'status' => 'sending' ] );
-			AIEM_Sender::enqueue_sends( (int) $campaign->id );
-			wp_schedule_single_event( time() + 2, 'aiem_process_batch', [ (int) $campaign->id ] );
+			$id = (int) $campaign->id;
+
+			if ( $campaign->recur_schedule && $campaign->ai_prompt ) {
+				$products = [];
+				if ( function_exists( 'wc_get_products' ) ) {
+					$cat_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_category_ids ?? '[]', true ) ?: [] ) );
+					$tag_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_tag_ids ?? '[]', true ) ?: [] ) );
+					$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
+				}
+
+				$result = AIEM_OpenAI::generate( $campaign->ai_prompt, $products );
+
+				if ( ! is_wp_error( $result ) ) {
+					$update = [ 'html_content' => $result['html'] ];
+					if ( $result['subject'] )      { $update['subject']   = $result['subject']; }
+					if ( $result['preview_text'] ) { $update['preheader'] = $result['preview_text']; }
+					AIEM_DB::update_campaign( $id, $update );
+				}
+			}
+
+			AIEM_DB::update_campaign( $id, [ 'status' => 'sending' ] );
+			AIEM_Sender::enqueue_sends( $id );
+			wp_schedule_single_event( time() + 2, 'aiem_process_batch', [ $id ] );
 		}
 	}
 

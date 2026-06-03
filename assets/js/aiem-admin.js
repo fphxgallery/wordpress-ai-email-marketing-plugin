@@ -18,18 +18,22 @@ jQuery(function ($) {
 		$('#aiem-generate-status').text('Generating…');
 
 		$.post(aiemAdmin.ajaxUrl, {
-			action:      'aiem_generate_email',
-			nonce:       aiemAdmin.nonce,
-			prompt:      prompt,
-			use_woo:     $('#aiem-use-woo').is(':checked') ? 1 : 0,
-			campaign_id: campaignId,
+			action:           'aiem_generate_email',
+			nonce:            aiemAdmin.nonce,
+			prompt:           prompt,
+			use_woo:          $('#aiem-use-woo').is(':checked') ? 1 : 0,
+			campaign_id:      campaignId,
+			woo_category_ids: JSON.stringify($('#aiem-woo-category-ids').val() || []),
+			woo_tag_ids:      JSON.stringify($('#aiem-woo-tag-ids').val() || []),
 		}, function (res) {
 			$('#aiem-generate-btn').prop('disabled', false);
 			$('#aiem-generate-spinner').hide();
 
 			if (res.success) {
 				$('#aiem-html-content').val(res.data.html);
-				$('#aiem-generate-status').text('Content generated. Review and edit below.');
+				if (res.data.subject)      { $('#aiem-subject').val(res.data.subject); }
+				if (res.data.preview_text) { $('#aiem-preheader').val(res.data.preview_text); }
+				$('#aiem-generate-status').text('Subject, preview text, and content generated. Review and edit below.');
 				// Show HTML so user sees generated content
 				if ($('#aiem-tab-html').length) { switchToHtml(); }
 			} else {
@@ -60,6 +64,11 @@ jQuery(function ($) {
 
 	// ── Save ─────────────────────────────────────────────────────────────
 
+	// Toggle WooCommerce filter panel with the checkbox
+	$('#aiem-use-woo').on('change', function () {
+		$('#aiem-woo-filters').toggle($(this).is(':checked'));
+	});
+
 	$('#aiem-save-btn').on('click', function () {
 		doSave(function (res) {
 			setResult(res.success, res.success ? res.data.message : res.data.message);
@@ -74,18 +83,21 @@ jQuery(function ($) {
 	function doSave(callback) {
 		var audienceMode = $('input[name="aiem-audience-mode"]:checked').val() || 'list';
 		$.post(aiemAdmin.ajaxUrl, {
-			action:       'aiem_save_campaign',
-			nonce:        aiemAdmin.nonce,
-			campaign_id:  campaignId,
-			name:         $('#aiem-name').val(),
-			subject:      $('#aiem-subject').val(),
-			preheader:    $('#aiem-preheader').val(),
-			list_id:      audienceMode === 'list' ? $('#aiem-list-id').val() : '0',
-			segment_id:   audienceMode === 'segment' ? $('#aiem-segment-id').val() : '0',
-			from_name:    $('#aiem-from-name').val(),
-			from_email:   $('#aiem-from-email').val(),
-			ai_prompt:    $('#aiem-ai-prompt').val(),
-			html_content: $('#aiem-html-content').val(),
+			action:            'aiem_save_campaign',
+			nonce:             aiemAdmin.nonce,
+			campaign_id:       campaignId,
+			name:              $('#aiem-name').val(),
+			subject:           $('#aiem-subject').val(),
+			preheader:         $('#aiem-preheader').val(),
+			list_id:           audienceMode === 'list' ? $('#aiem-list-id').val() : '0',
+			segment_id:        audienceMode === 'segment' ? $('#aiem-segment-id').val() : '0',
+			from_name:         $('#aiem-from-name').val(),
+			from_email:        $('#aiem-from-email').val(),
+			ai_prompt:         $('#aiem-ai-prompt').val(),
+			html_content:      $('#aiem-html-content').val(),
+			recur_schedule:    $('#aiem-recur-schedule').val() || '',
+			woo_category_ids:  JSON.stringify($('#aiem-woo-category-ids').val() || []),
+			woo_tag_ids:       JSON.stringify($('#aiem-woo-tag-ids').val() || []),
 		}, callback);
 	}
 
@@ -414,6 +426,12 @@ jQuery(function ($) {
 		'post_published':          'Fires when a new post is published.',
 	};
 
+	var baseVars = '<code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{email}}</code> <code>{{site_name}}</code> <code>{{site_url}}</code> <code>{{DATE}}</code>';
+	var extraVars = {
+		'campaign_sent':  ' <code>{{SUBJECT}}</code> <code>{{COUNT}}</code>',
+		'post_published': ' <code>{{post_title}}</code> <code>{{post_url}}</code> <code>{{post_excerpt}}</code> <code>{{post_author}}</code>',
+	};
+
 	$('#wf-trigger').on('change', function () {
 		var val = $(this).val();
 
@@ -436,7 +454,51 @@ jQuery(function ($) {
 		} else {
 			$('#wf-no-rules').text('Select a trigger first to see available rules.').show();
 		}
+
+		$('#wf-content-vars').html('Variables: ' + baseVars + (extraVars[val] || ''));
 	});
+
+	function wfResetForm() {
+		$('#wf-id').val('0');
+		$('#wf-name').val('');
+		$('#wf-trigger').val('').trigger('change');
+		$('#wf-send-to').val('{{EMAIL}}');
+		$('#wf-subject').val('');
+		$('#wf-email-content').val('');
+		$('#wf-email-styling').val('none');
+		$('#wf-delay-value').val('0');
+		$('#wf-delay-unit').val('minutes');
+		$('#wf-form-heading').text('Create Workflow');
+		$('#wf-save-btn').text('Create Workflow');
+		$('#wf-cancel-btn').hide();
+		$('#wf-save-result').text('');
+	}
+
+	$(document).on('click', '.aiem-wf-edit', function () {
+		var wf = $(this).data('wf');
+		$('#wf-id').val(wf.id);
+		$('#wf-name').val(wf.name);
+		$('#wf-trigger').val(wf.trigger_type).trigger('change');
+		if (wf.trigger_type === 'campaign_sent') {
+			$('#wf-filter-campaign-id').val((wf.trigger_config && wf.trigger_config.filter_campaign_id) ? wf.trigger_config.filter_campaign_id : '0');
+		} else if (wf.trigger_type === 'post_published') {
+			$('#wf-category-id').val((wf.trigger_config && wf.trigger_config.category_id) ? wf.trigger_config.category_id : '');
+			$('#wf-action-list-id').val(wf.action_list_id || '');
+		}
+		$('#wf-send-to').val(wf.action_send_to || '{{EMAIL}}');
+		$('#wf-subject').val(wf.action_subject || '');
+		$('#wf-email-content').val(wf.action_content || '');
+		$('#wf-email-styling').val(wf.action_email_styling || 'none');
+		$('#wf-delay-value').val(wf.delay_value || 0);
+		$('#wf-delay-unit').val(wf.delay_unit || 'minutes');
+		$('#wf-form-heading').text('Edit Workflow');
+		$('#wf-save-btn').text('Update Workflow');
+		$('#wf-cancel-btn').show();
+		$('#wf-save-result').text('');
+		$('html, body').animate({ scrollTop: $('#wf-form-heading').offset().top - 40 }, 200);
+	});
+
+	$('#wf-cancel-btn').on('click', wfResetForm);
 
 	$('#wf-save-btn').on('click', function () {
 		var name    = $('#wf-name').val().trim();
@@ -461,6 +523,7 @@ jQuery(function ($) {
 		var postData = {
 			action:               'aiem_save_workflow',
 			nonce:                aiemAdmin.nonce,
+			workflow_id:          $('#wf-id').val() || '0',
 			name:                 name,
 			trigger_type:         trigger,
 			action_send_to:       $('#wf-send-to').val(),
@@ -957,6 +1020,28 @@ jQuery(function ($) {
 			} else {
 				alert(res.data.message || 'Error creating campaign.');
 				btn.prop('disabled', false).text(btn.attr('data-original-text') || 'Resend to non-openers');
+			}
+		});
+	});
+
+	// Campaigns list: Re-send
+	$(document).on('click', '.aiem-resend-link', function (e) {
+		e.preventDefault();
+		var link       = $(this);
+		var campaignId = link.data('campaign');
+		if (!confirm('Re-send this campaign to all current subscribers on the list? Old send records will be cleared.')) { return; }
+		link.text('Sending…');
+		$.post(aiemAdmin.ajaxUrl, {
+			action:      'aiem_resend_campaign',
+			nonce:       aiemAdmin.nonce,
+			campaign_id: campaignId,
+		}, function (res) {
+			if (res.success) {
+				alert(res.data.message);
+				window.location.reload();
+			} else {
+				alert(res.data.message || 'Re-send failed.');
+				link.text('Re-send');
 			}
 		});
 	});
