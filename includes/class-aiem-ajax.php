@@ -180,6 +180,31 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'No audience selected. Choose a list or segment.' ] );
 		}
 
+		// Regenerate AI content for recurring AI campaigns, same as the cron path.
+		if ( $campaign->recur_schedule && $campaign->ai_prompt ) {
+			$products = [];
+			if ( function_exists( 'wc_get_products' ) ) {
+				$cat_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_category_ids ?? '[]', true ) ?: [] ) );
+				$tag_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_tag_ids ?? '[]', true ) ?: [] ) );
+				$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
+			}
+			$tpl_html = '';
+			if ( ! empty( $campaign->template_id ) ) {
+				$tpl = AIEM_DB::get_email_template( (int) $campaign->template_id );
+				if ( $tpl ) {
+					$tpl_html = $tpl->html_content;
+				}
+			}
+			$result = AIEM_OpenAI::generate( $campaign->ai_prompt, $products, $tpl_html );
+			if ( ! is_wp_error( $result ) ) {
+				$update = [ 'html_content' => $result['html'] ];
+				if ( $result['subject'] )      { $update['subject']   = $result['subject']; }
+				if ( $result['preview_text'] ) { $update['preheader'] = $result['preview_text']; }
+				AIEM_DB::update_campaign( $campaign_id, $update );
+				$campaign = AIEM_DB::get_campaign( $campaign_id );
+			}
+		}
+
 		AIEM_DB::update_campaign( $campaign_id, [ 'status' => 'sending' ] );
 		$count = AIEM_Sender::enqueue_sends( $campaign_id );
 
@@ -188,9 +213,11 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'No subscribed recipients found on this list.' ] );
 		}
 
-		wp_schedule_single_event( time() + 2, 'aiem_process_batch', [ $campaign_id ] );
+		// Process synchronously so sends go out immediately (no WP-Cron dependency).
+		// For very large lists the batch loop will re-schedule itself for the remainder.
+		AIEM_Sender::process_batch( $campaign_id );
 
-		wp_send_json_success( [ 'message' => "Sending to {$count} subscriber(s). Processing in background.", 'count' => $count ] );
+		wp_send_json_success( [ 'message' => "Sent to {$count} subscriber(s).", 'count' => $count ] );
 	}
 
 	public function schedule_campaign(): void {
@@ -211,17 +238,22 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'Campaign has no content.' ] );
 		}
 
-		$ts = strtotime( $scheduled_at );
-		if ( ! $ts || $ts <= time() ) {
+		try {
+			$dt = new DateTimeImmutable( $scheduled_at, wp_timezone() );
+		} catch ( Exception $e ) {
+			wp_send_json_error( [ 'message' => 'Invalid date format.' ] );
+		}
+		$ts = $dt->getTimestamp();
+		if ( ! $ts || $ts <= current_time( 'timestamp' ) ) {
 			wp_send_json_error( [ 'message' => 'Scheduled time must be in the future.' ] );
 		}
 
 		AIEM_DB::update_campaign( $campaign_id, [
 			'status'       => 'scheduled',
-			'scheduled_at' => date( 'Y-m-d H:i:s', $ts ),
+			'scheduled_at' => wp_date( 'Y-m-d H:i:s', $ts ),
 		] );
 
-		wp_send_json_success( [ 'message' => 'Campaign scheduled for ' . date( 'M j, Y g:i a', $ts ) ] );
+		wp_send_json_success( [ 'message' => 'Campaign scheduled for ' . wp_date( 'M j, Y g:i a', $ts ) ] );
 	}
 
 	public function import_subscribers(): void {
@@ -401,6 +433,7 @@ class AIEM_Ajax {
 			'recur_schedule'   => $recur_schedule,
 			'woo_category_ids' => $woo_cat_ids,
 			'woo_tag_ids'      => $woo_tag_ids_enc,
+			'template_id'      => (int) ( $_POST['template_id'] ?? 0 ),
 		];
 
 		if ( $id ) {
@@ -875,8 +908,8 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'No subscribed recipients found.' ] );
 		}
 
-		wp_schedule_single_event( time() + 2, 'aiem_process_batch', [ $campaign_id ] );
-		wp_send_json_success( [ 'message' => "Re-sending to {$count} subscriber(s). Processing in background.", 'count' => $count ] );
+		AIEM_Sender::process_batch( $campaign_id );
+		wp_send_json_success( [ 'message' => "Re-sent to {$count} subscriber(s).", 'count' => $count ] );
 	}
 
 	public function process_workflow_queue(): void {

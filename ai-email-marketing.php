@@ -12,7 +12,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'AIEM_VERSION',    '1.2.2' );
+define( 'AIEM_VERSION',    '1.2.3' );
 define( 'AIEM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'AIEM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 

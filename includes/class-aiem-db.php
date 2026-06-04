@@ -99,6 +99,7 @@ class AIEM_DB {
 			recur_schedule varchar(20) NOT NULL DEFAULT '',
 			woo_category_ids text NOT NULL,
 			woo_tag_ids text NOT NULL,
+			template_id bigint(20) UNSIGNED NOT NULL DEFAULT 0,
 			scheduled_at datetime DEFAULT NULL,
 			sent_at datetime DEFAULT NULL,
 			created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -469,6 +470,7 @@ class AIEM_DB {
 			'recur_schedule'   => sanitize_text_field( $data['recur_schedule'] ?? '' ),
 			'woo_category_ids' => $data['woo_category_ids'] ?? '[]',
 			'woo_tag_ids'      => $data['woo_tag_ids'] ?? '[]',
+			'template_id'      => (int) ( $data['template_id'] ?? 0 ),
 		];
 
 		// SQLite parser fails on single-quoted content via $wpdb->insert; AI email
@@ -480,7 +482,7 @@ class AIEM_DB {
 		$result = $wpdb->insert(
 			"{$wpdb->prefix}aiem_campaigns",
 			$row,
-			[ '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+			[ '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d' ]
 		);
 		return $result ? $wpdb->insert_id : false;
 	}
@@ -506,7 +508,7 @@ class AIEM_DB {
 
 	public static function update_campaign( int $id, array $data ): bool {
 		global $wpdb;
-		$allowed = [ 'name', 'subject', 'preheader', 'list_id', 'segment_id', 'status', 'html_content', 'blocks', 'ai_prompt', 'from_name', 'from_email', 'scheduled_at', 'sent_at', 'recur_schedule', 'woo_category_ids', 'woo_tag_ids' ];
+		$allowed = [ 'name', 'subject', 'preheader', 'list_id', 'segment_id', 'status', 'html_content', 'blocks', 'ai_prompt', 'from_name', 'from_email', 'scheduled_at', 'sent_at', 'recur_schedule', 'woo_category_ids', 'woo_tag_ids', 'template_id' ];
 		$update  = array_intersect_key( $data, array_flip( $allowed ) );
 		if ( empty( $update ) ) {
 			return false;

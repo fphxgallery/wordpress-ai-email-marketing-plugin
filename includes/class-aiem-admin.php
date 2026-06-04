@@ -826,7 +826,7 @@ class AIEM_Admin {
 			<table class="wp-list-table widefat fixed striped aiem-table">
 				<thead>
 					<tr>
-						<th>Name</th><th>Subject</th><th>List</th><th>Status</th><th>Created</th><th>Actions</th>
+						<th>Name</th><th>Subject</th><th>List</th><th>Status</th><th>Scheduled For</th><th>Created</th><th>Actions</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -836,6 +836,19 @@ class AIEM_Admin {
 						<td><?php echo esc_html( $c->subject ); ?></td>
 						<td><?php echo esc_html( $c->list_name ?? '—' ); ?></td>
 						<td><span class="aiem-badge aiem-status-<?php echo esc_attr( $c->status ); ?>"><?php echo esc_html( $c->status ); ?></span></td>
+						<td style="white-space:nowrap;color:#374151;font-size:13px">
+							<?php
+							if ( $c->status === 'scheduled' && ! empty( $c->scheduled_at ) ) {
+								$ts = strtotime( $c->scheduled_at );
+								echo esc_html( wp_date( 'M j, Y g:i a', $ts ) );
+								if ( $ts < current_time( 'timestamp' ) ) {
+									echo ' <span style="color:#ef4444;font-size:11px">(overdue)</span>';
+								}
+							} else {
+								echo '—';
+							}
+							?>
+						</td>
 						<td><?php echo esc_html( date( 'M j, Y', strtotime( $c->created_at ) ) ); ?></td>
 						<td>
 							<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-campaign-edit&campaign_id=' . $c->id ) ); ?>">Edit</a>
@@ -843,6 +856,10 @@ class AIEM_Admin {
 							<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-reports&campaign_id=' . $c->id ) ); ?>">Report</a>
 							&nbsp;|&nbsp;
 							<a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=aiem_duplicate_campaign&campaign_id=' . $c->id ), 'aiem_duplicate_campaign_' . $c->id ) ); ?>">Duplicate</a>
+							<?php if ( $c->status === 'scheduled' ) : ?>
+							&nbsp;|&nbsp;
+							<a href="#" class="aiem-send-now-link" data-campaign="<?php echo (int) $c->id; ?>">Send Now</a>
+							<?php endif; ?>
 							<?php if ( in_array( $c->status, [ 'sent', 'sending' ], true ) ) : ?>
 							&nbsp;|&nbsp;
 							<a href="#" class="aiem-resend-link" data-campaign="<?php echo (int) $c->id; ?>">Re-send</a>
@@ -1021,7 +1038,7 @@ class AIEM_Admin {
 							<select id="aiem-load-template" style="min-width:200px">
 								<option value="">— Select template —</option>
 								<?php foreach ( $templates as $t ) : ?>
-									<option value="<?php echo (int) $t->id; ?>" data-html="<?php echo esc_attr( $t->html_content ); ?>">
+									<option value="<?php echo (int) $t->id; ?>" data-html="<?php echo esc_attr( $t->html_content ); ?>" <?php selected( $campaign ? (int) $campaign->template_id : 0, (int) $t->id ); ?>>
 										<?php echo esc_html( $t->name ); ?>
 									</option>
 								<?php endforeach; ?>

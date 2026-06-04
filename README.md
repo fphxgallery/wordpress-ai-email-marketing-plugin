@@ -4,7 +4,7 @@ An OpenAI-powered email marketing plugin for WordPress. Build and send campaigns
 
 ## Features
 
-- **Campaigns** — Create HTML email campaigns with AI-generated subject line, preview text, and body copy (OpenAI GPT-4o); schedule sends; recurring campaigns auto-regenerate fresh content each cycle
+- **Campaigns** — Create HTML email campaigns with AI-generated subject line, preview text, and body copy (OpenAI GPT-4o); schedule sends with correct WordPress timezone handling; "Scheduled For" column shows next run time with overdue indicator; Send Now button for instant dispatch; recurring campaigns auto-regenerate fresh content using the saved Email Editor template each cycle
 - **AI Template Generation** — Select a template from the Email Editor before generating and the AI fills your brand layout instead of producing free-form HTML. Multiple WooCommerce products each get their own section, separated by dividers. System prompts editable in Settings with Reset to Default buttons
 - **Visual Email Editor** — Block-based drag-and-drop email builder (heading, text, button, image, divider, spacer) with reusable templates; paste raw HTML directly via HTML tab
 - **No Email Wrapper** — Campaign HTML is sent exactly as written. No header or container added. Use `{{unsubscribe_url}}`, `{{site_name}}`, `{{site_url}}` placeholders anywhere in your HTML — they are replaced at send time
@@ -70,6 +70,7 @@ Available in campaign HTML and workflow email content:
 
 ## Changelog
 
+- **1.2.3** — Campaign scheduling fixes: timezone bug in schedule_campaign (was using PHP server timezone instead of WordPress timezone); Send Now button on Campaigns list triggers immediate send; recurring AI campaigns now regenerate using the saved Email Editor template; template association persisted on campaign save; "Scheduled For" column on Campaigns list with overdue indicator.
 - **1.2.2** — Remove email wrapper. Campaign HTML sent as-is — no header or container added. Tracking pixel, merge tags, link rewriting, and placeholder replacement applied directly to campaign HTML.
 - **1.2.1** — Multi-product template layout: everything before the first `<hr>` is the product block; everything after the last `<hr>` is the footer. Additional products inserted between `<hr>` dividers.
 - **1.2.0** — Fix template HTML silently stripped on save (`wp_kses_post()` was removing inline CSS and empty `<img src="">`). Replaced with `wp_unslash()` on all admin HTML save paths.

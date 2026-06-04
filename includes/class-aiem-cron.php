@@ -53,7 +53,12 @@ class AIEM_Cron {
 					$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
 				}
 
-				$result = AIEM_OpenAI::generate( $campaign->ai_prompt, $products );
+				$tpl_html = '';
+				if ( ! empty( $campaign->template_id ) ) {
+					$tpl = AIEM_DB::get_email_template( (int) $campaign->template_id );
+					if ( $tpl ) { $tpl_html = $tpl->html_content; }
+				}
+				$result = AIEM_OpenAI::generate( $campaign->ai_prompt, $products, $tpl_html );
 
 				if ( ! is_wp_error( $result ) ) {
 					$update = [ 'html_content' => $result['html'] ];

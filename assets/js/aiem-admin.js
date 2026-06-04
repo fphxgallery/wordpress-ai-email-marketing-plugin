@@ -169,6 +169,7 @@ jQuery(function ($) {
 			recur_schedule:    $('#aiem-recur-schedule').val() || '',
 			woo_category_ids:  JSON.stringify($('#aiem-woo-category-ids').val() || []),
 			woo_tag_ids:       JSON.stringify($('#aiem-woo-tag-ids').val() || []),
+			template_id:       $('#aiem-load-template').val() || 0,
 		}, callback);
 	}
 
@@ -1096,6 +1097,27 @@ jQuery(function ($) {
 	});
 
 	// Campaigns list: Re-send
+	$(document).on('click', '.aiem-send-now-link', function (e) {
+		e.preventDefault();
+		var link       = $(this);
+		var campaignId = link.data('campaign');
+		if (!confirm('Send this campaign now, bypassing the scheduled time?')) { return; }
+		link.text('Sending…');
+		$.post(aiemAdmin.ajaxUrl, {
+			action:      'aiem_send_campaign',
+			nonce:       aiemAdmin.nonce,
+			campaign_id: campaignId,
+		}, function (res) {
+			if (res.success) {
+				alert(res.data.message);
+				window.location.reload();
+			} else {
+				alert(res.data.message || 'Send failed.');
+				link.text('Send Now');
+			}
+		});
+	});
+
 	$(document).on('click', '.aiem-resend-link', function (e) {
 		e.preventDefault();
 		var link       = $(this);
