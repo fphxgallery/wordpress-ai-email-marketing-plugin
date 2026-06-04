@@ -178,9 +178,6 @@ class AIEM_Sender {
 	}
 
 	public static function build_email( string $html_content, string $tracking_key, object $subscriber, string $preheader = '' ): string {
-		$template_file = AIEM_PLUGIN_DIR . 'templates/default-email.html';
-		$template      = file_get_contents( $template_file );
-
 		$content = self::replace_merge_tags( $html_content, $subscriber );
 		$content = self::rewrite_links( $content, $tracking_key );
 
@@ -192,13 +189,27 @@ class AIEM_Sender {
 		$pixel_url      = add_query_arg( [ 'aiem_track' => 'open', 'k' => $tracking_key ], home_url( '/' ) );
 		$tracking_pixel = '<img src="' . esc_url( $pixel_url ) . '" width="1" height="1" style="display:block;border:0;" alt="" />';
 
-		$output = str_replace(
-			[ '{{content}}', '{{unsubscribe_url}}', '{{site_name}}', '{{site_url}}', '{{preheader}}' ],
-			[ $content . $tracking_pixel, esc_url( $unsub_url ), get_bloginfo( 'name' ), home_url(), esc_html( $preheader ) ],
-			$template
+		// Replace any placeholders present in the campaign HTML directly.
+		$content = str_replace(
+			[ '{{unsubscribe_url}}', '{{site_name}}', '{{site_url}}', '{{preheader}}' ],
+			[ esc_url( $unsub_url ), get_bloginfo( 'name' ), home_url(), esc_html( $preheader ) ],
+			$content
 		);
 
-		return $output;
+		// Inject preheader hidden div and tracking pixel if the HTML has a body tag;
+		// otherwise append to end.
+		if ( $preheader && stripos( $content, '<body' ) !== false ) {
+			$preheader_div = '<div style="display:none;font-size:1px;color:transparent;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">' . esc_html( $preheader ) . '</div>';
+			$content = preg_replace( '/(<body[^>]*>)/i', '$1' . $preheader_div, $content, 1 );
+		}
+
+		if ( stripos( $content, '</body>' ) !== false ) {
+			$content = str_ireplace( '</body>', $tracking_pixel . '</body>', $content );
+		} else {
+			$content .= $tracking_pixel;
+		}
+
+		return $content;
 	}
 
 	private static function replace_merge_tags( string $html, object $subscriber ): string {
