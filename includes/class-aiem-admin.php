@@ -751,6 +751,8 @@ class AIEM_Admin {
 			'workflow_queued'   => 'Workflow Queued',
 			'workflow_sent'     => 'Workflow Sent',
 			'workflow_failed'   => 'Workflow Failed',
+			'cron_check'        => 'Cron: Check Scheduled',
+			'cron_batch'        => 'Cron: Process Batch',
 		];
 		?>
 		<div class="wrap aiem-wrap">
@@ -839,9 +841,9 @@ class AIEM_Admin {
 						<td style="white-space:nowrap;color:#374151;font-size:13px">
 							<?php
 							if ( $c->status === 'scheduled' && ! empty( $c->scheduled_at ) ) {
-								$ts = strtotime( $c->scheduled_at );
+								$ts = ( new DateTimeImmutable( $c->scheduled_at, wp_timezone() ) )->getTimestamp();
 								echo esc_html( wp_date( 'M j, Y g:i a', $ts ) );
-								if ( $ts < current_time( 'timestamp' ) ) {
+								if ( $ts < time() ) {
 									echo ' <span style="color:#ef4444;font-size:11px">(overdue)</span>';
 								}
 							} else {
@@ -1069,7 +1071,7 @@ class AIEM_Admin {
 						<button type="button" id="aiem-test-send-btn" class="button">Send Test Email</button>
 						<button type="button" id="aiem-send-btn" class="button button-primary">Send Now</button>
 						<span class="aiem-schedule-wrap">
-							<input type="datetime-local" id="aiem-scheduled-at" value="<?php echo esc_attr( ! empty( $campaign->scheduled_at ) ? date( 'Y-m-d\TH:i', strtotime( $campaign->scheduled_at ) ) : '' ); ?>" />
+							<input type="datetime-local" id="aiem-scheduled-at" value="<?php echo esc_attr( ! empty( $campaign->scheduled_at ) ? ( new DateTimeImmutable( $campaign->scheduled_at, wp_timezone() ) )->format( 'Y-m-d\TH:i' ) : '' ); ?>" />
 							<button type="button" id="aiem-schedule-btn" class="button">Schedule</button>
 						</span>
 						<span class="aiem-recur-wrap" style="margin-left:12px;">
@@ -1848,6 +1850,8 @@ class AIEM_Admin {
 			'workflow_queued'  => [ 'draft',         'WF Queued' ],
 			'workflow_sent'    => [ 'sent',          'WF Sent' ],
 			'workflow_failed'  => [ 'failed',        'WF Failed' ],
+			'cron_check'       => [ 'scheduled',     'Cron Check' ],
+			'cron_batch'       => [ 'sending',       'Cron Batch' ],
 		];
 		[ $class, $label ] = $map[ $event_type ] ?? [ 'draft', $event_type ];
 		return '<span class="aiem-badge aiem-status-' . esc_attr( $class ) . '">' . esc_html( $label ) . '</span>';

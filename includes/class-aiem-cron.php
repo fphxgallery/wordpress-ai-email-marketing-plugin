@@ -42,6 +42,13 @@ class AIEM_Cron {
 
 	public function check_scheduled(): void {
 		$campaigns = AIEM_DB::get_scheduled_due();
+
+		AIEM_Logs::log( AIEM_Logs::EVENT_CRON_CHECK, [
+			'found'        => count( $campaigns ),
+			'current_time' => current_time( 'mysql' ),
+			'ids'          => array_map( fn( $c ) => (int) $c->id, $campaigns ),
+		] );
+
 		foreach ( $campaigns as $campaign ) {
 			$id = (int) $campaign->id;
 
@@ -65,11 +72,22 @@ class AIEM_Cron {
 					if ( $result['subject'] )      { $update['subject']   = $result['subject']; }
 					if ( $result['preview_text'] ) { $update['preheader'] = $result['preview_text']; }
 					AIEM_DB::update_campaign( $id, $update );
+				} else {
+					AIEM_Logs::log( AIEM_Logs::EVENT_CRON_CHECK, [
+						'campaign_id' => $id,
+						'action'      => 'ai_generate_failed',
+						'error'       => $result->get_error_message(),
+					] );
 				}
 			}
 
 			AIEM_DB::update_campaign( $id, [ 'status' => 'sending' ] );
-			AIEM_Sender::enqueue_sends( $id );
+			$enqueued = AIEM_Sender::enqueue_sends( $id );
+			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_CHECK, [
+				'campaign_id' => $id,
+				'action'      => 'enqueued',
+				'sends'       => $enqueued,
+			] );
 			wp_schedule_single_event( time() + 2, 'aiem_process_batch', [ $id ] );
 		}
 	}

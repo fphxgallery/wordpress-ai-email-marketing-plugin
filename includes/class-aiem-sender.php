@@ -68,11 +68,21 @@ class AIEM_Sender {
 	public static function process_batch( int $campaign_id ): bool {
 		$campaign = AIEM_DB::get_campaign( $campaign_id );
 		if ( ! $campaign ) {
+			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
+				'campaign_id' => $campaign_id,
+				'error'       => 'campaign_not_found',
+			] );
 			return false;
 		}
 
 		$batch_size = max( 1, (int) get_option( 'aiem_batch_size', 50 ) );
 		$sends = AIEM_DB::get_pending_sends( $campaign_id, $batch_size );
+
+		AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
+			'campaign_id' => $campaign_id,
+			'batch_size'  => $batch_size,
+			'pending'     => count( $sends ),
+		] );
 
 		foreach ( $sends as $send ) {
 			$subscriber  = (object) [ 'email' => $send->email, 'first_name' => $send->first_name, 'last_name' => $send->last_name ];
@@ -117,10 +127,19 @@ class AIEM_Sender {
 		if ( $remaining > 0 ) {
 			$delay = max( 1, (int) get_option( 'aiem_batch_delay', 5 ) );
 			wp_schedule_single_event( time() + $delay, 'aiem_process_batch', [ $campaign_id ] );
+			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
+				'campaign_id' => $campaign_id,
+				'action'      => 'next_batch_scheduled',
+				'delay'       => $delay,
+			] );
 		} else {
 			AIEM_DB::update_campaign( $campaign_id, [
 				'status'  => 'sent',
 				'sent_at' => current_time( 'mysql' ),
+			] );
+			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
+				'campaign_id' => $campaign_id,
+				'action'      => 'campaign_complete',
 			] );
 			AIEM_Workflows::handle_campaign_sent( $campaign_id );
 			AIEM_DB::schedule_next_recurrence( $campaign_id );

@@ -70,6 +70,7 @@ Available in campaign HTML and workflow email content:
 
 ## Changelog
 
+- **1.2.4** — Fix scheduled campaign display showing wrong time when WordPress timezone differs from PHP server timezone. Campaign list "Scheduled For" column and edit form date picker now correctly parse `scheduled_at` (stored in WP local time) using `wp_timezone()` instead of PHP's `strtotime()`. Add `cron_check` and `cron_batch` log events so cron activity is visible in the Logs tab; add Cron Check and Cron Batch entries to the log event filter dropdown.
 - **1.2.3** — Campaign scheduling fixes: timezone bug in schedule_campaign (was using PHP server timezone instead of WordPress timezone); Send Now button on Campaigns list triggers immediate send; recurring AI campaigns now regenerate using the saved Email Editor template; template association persisted on campaign save; "Scheduled For" column on Campaigns list with overdue indicator.
 - **1.2.2** — Remove email wrapper. Campaign HTML sent as-is — no header or container added. Tracking pixel, merge tags, link rewriting, and placeholder replacement applied directly to campaign HTML.
 - **1.2.1** — Multi-product template layout: everything before the first `<hr>` is the product block; everything after the last `<hr>` is the footer. Additional products inserted between `<hr>` dividers.
