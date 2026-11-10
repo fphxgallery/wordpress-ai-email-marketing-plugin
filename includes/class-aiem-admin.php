@@ -61,6 +61,15 @@ class AIEM_Admin {
 			'defaultPrompt'         => 'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.',
 			'defaultTemplatePrompt' => AIEM_OpenAI::default_template_prompt(),
 		] );
+
+		// Email template gallery + three-pane editor.
+		if ( strpos( $hook, 'aiem-email-editor' ) !== false || strpos( $hook, 'aiem-email-template-edit' ) !== false ) {
+			wp_enqueue_style( 'aiem-email-editor', AIEM_PLUGIN_URL . 'assets/css/aiem-email-editor.css', [ 'aiem-admin' ], AIEM_VERSION );
+		}
+		if ( strpos( $hook, 'aiem-email-template-edit' ) !== false ) {
+			wp_enqueue_media();
+			wp_enqueue_script( 'aiem-email-editor', AIEM_PLUGIN_URL . 'assets/js/aiem-email-editor.js', [ 'jquery', 'aiem-admin' ], AIEM_VERSION, true );
+		}
 	}
 
 	// ── Pages ──────────────────────────────────────────────────────────────
@@ -398,33 +407,62 @@ class AIEM_Admin {
 
 	public function page_email_editor(): void {
 		$templates = AIEM_DB::get_email_templates();
+		$usage     = AIEM_DB::get_template_usage_counts();
+		$new_url   = admin_url( 'admin.php?page=aiem-email-template-edit' );
+		$starters  = [
+			'blank'        => [ 'Blank',        'welcome-add-page' ],
+			'announcement' => [ 'Announcement', 'megaphone' ],
+			'product'      => [ 'Product',      'cart' ],
+			'newsletter'   => [ 'Newsletter',   'text-page' ],
+			'html'         => [ 'Paste HTML',   'editor-code' ],
+		];
 		?>
 		<div class="wrap aiem-wrap">
-			<h1>Email Editor <a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-email-template-edit' ) ); ?>" class="page-title-action">+ New Template</a></h1>
+			<h1>Email Templates <a href="<?php echo esc_url( $new_url ); ?>" class="page-title-action">New template</a></h1>
 			<?php $this->show_notice(); ?>
 
-			<?php if ( empty( $templates ) ) : ?>
-				<p>No templates yet. <a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-email-template-edit' ) ); ?>">Create your first template</a>.</p>
-			<?php else : ?>
-			<table class="wp-list-table widefat fixed striped aiem-table">
-				<thead>
-					<tr><th>Name</th><th>Created</th><th>Actions</th></tr>
-				</thead>
-				<tbody>
-				<?php foreach ( $templates as $t ) : ?>
-					<tr id="aiem-tpl-row-<?php echo (int) $t->id; ?>">
-						<td><strong><?php echo esc_html( $t->name ); ?></strong></td>
-						<td><?php echo esc_html( date( 'M j, Y', strtotime( $t->created_at ) ) ); ?></td>
-						<td>
-							<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-email-template-edit&template_id=' . $t->id ) ); ?>">Edit</a>
-							&nbsp;|&nbsp;
+			<div class="aiem-tpl-grid">
+				<div class="aiem-tpl-card aiem-tpl-new">
+					<h3>New template</h3>
+					<p>Start from a layout, or paste your own HTML.</p>
+					<?php foreach ( $starters as $key => $starter ) : ?>
+						<a href="<?php echo esc_url( add_query_arg( 'starter', $key, $new_url ) ); ?>">
+							<span class="dashicons dashicons-<?php echo esc_attr( $starter[1] ); ?>" aria-hidden="true"></span>
+							<?php echo esc_html( $starter[0] ); ?>
+						</a>
+					<?php endforeach; ?>
+				</div>
+
+				<?php foreach ( $templates as $t ) :
+					$edit_url = admin_url( 'admin.php?page=aiem-email-template-edit&template_id=' . (int) $t->id );
+					$decoded  = json_decode( (string) $t->blocks, true );
+					$is_block = is_array( $decoded ) && ! empty( $decoded );
+					$used     = (int) ( $usage[ (int) $t->id ] ?? 0 );
+					?>
+					<div class="aiem-tpl-card" id="aiem-tpl-row-<?php echo (int) $t->id; ?>">
+						<a class="aiem-tpl-thumb" href="<?php echo esc_url( $edit_url ); ?>" aria-label="<?php echo esc_attr( 'Edit ' . $t->name ); ?>">
+							<?php // sandbox="" blocks scripts; the thumbnail is display-only. ?>
+							<iframe sandbox="" loading="lazy" tabindex="-1" scrolling="no" title="" srcdoc="<?php echo esc_attr( (string) $t->html_content ); ?>"></iframe>
+						</a>
+						<div class="aiem-tpl-name" title="<?php echo esc_attr( $t->name ); ?>"><?php echo esc_html( $t->name ); ?></div>
+						<p class="aiem-tpl-meta">
+							<span class="aiem-tpl-kind"><?php echo $is_block ? 'Blocks' : 'HTML'; ?></span>
+							<?php
+							if ( $used > 0 ) {
+								echo esc_html( sprintf( 'Used in %d %s', $used, $used === 1 ? 'campaign' : 'campaigns' ) );
+							} else {
+								echo esc_html( 'Created ' . date_i18n( 'M j, Y', strtotime( $t->created_at ) ) );
+							}
+							?>
+						</p>
+						<div class="aiem-tpl-actions">
+							<a href="<?php echo esc_url( $edit_url ); ?>">Edit</a>
+							<button type="button" class="button-link aiem-tpl-duplicate" data-id="<?php echo (int) $t->id; ?>">Duplicate</button>
 							<button type="button" class="button-link aiem-danger aiem-tpl-delete" data-id="<?php echo (int) $t->id; ?>">Delete</button>
-						</td>
-					</tr>
+						</div>
+					</div>
 				<?php endforeach; ?>
-				</tbody>
-			</table>
-			<?php endif; ?>
+			</div>
 		</div>
 		<?php
 	}
@@ -432,75 +470,57 @@ class AIEM_Admin {
 	public function page_email_template_edit(): void {
 		$template_id = (int) ( $_GET['template_id'] ?? 0 );
 		$template    = $template_id ? AIEM_DB::get_email_template( $template_id ) : null;
-		$blocks_json = $template->blocks ?? '[]';
-		$html        = $template->html_content ?? '';
+		$starter     = sanitize_key( $_GET['starter'] ?? 'blank' );
+
+		$blocks = $template ? json_decode( (string) $template->blocks, true ) : [];
+		$boot   = [
+			'id'      => $template ? (int) $template->id : 0,
+			'blocks'  => is_array( $blocks ) ? $blocks : [],
+			'html'    => $template ? (string) $template->html_content : '',
+			'starter' => $template ? '' : $starter,
+		];
 		?>
-		<div class="wrap aiem-wrap">
-			<h1>
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-email-editor' ) ); ?>" style="font-size:14px;font-weight:400;vertical-align:middle;margin-right:8px">← Email Editor</a>
-				<?php echo $template ? 'Edit Template: ' . esc_html( $template->name ) : 'New Template'; ?>
-			</h1>
+		<div class="wrap aiem-wrap aiem-ee" id="aiem-ee">
+			<h1 class="screen-reader-text"><?php echo $template ? 'Edit email template' : 'New email template'; ?></h1>
 			<?php $this->show_notice(); ?>
 
-			<div style="max-width:900px">
-				<input type="hidden" id="aiem-template-id" value="<?php echo $template_id; ?>" />
-
-				<div style="margin-bottom:12px;display:flex;align-items:center;gap:12px">
-					<input type="text" id="aiem-template-name" class="regular-text" style="font-size:15px;padding:8px 10px;min-width:320px"
-					       value="<?php echo esc_attr( $template->name ?? '' ); ?>"
-					       placeholder="Template name, e.g. Welcome Email" />
-					<button type="button" id="aiem-template-save-btn" class="button button-primary">
-						<?php echo $template ? 'Update Template' : 'Save Template'; ?>
-					</button>
-					<span id="aiem-template-save-result" style="font-size:13px"></span>
-				</div>
-
-				<div class="aiem-editor-box">
-					<div class="aiem-editor-tabs">
-						<button type="button" class="aiem-editor-tab aiem-editor-tab--visual" id="aiem-tab-visual">Visual</button>
-						<button type="button" class="aiem-editor-tab aiem-editor-tab--html"   id="aiem-tab-html">HTML</button>
-					</div>
-
-					<div id="aiem-visual-editor">
-						<div class="aiem-block-palette">
-							<span class="aiem-palette-label">Add block:</span>
-							<button type="button" class="aiem-palette-btn" data-block="heading">H Heading</button>
-							<button type="button" class="aiem-palette-btn" data-block="text">T Text</button>
-							<button type="button" class="aiem-palette-btn" data-block="button">⬛ Button</button>
-							<button type="button" class="aiem-palette-btn" data-block="image">🖼 Image</button>
-							<button type="button" class="aiem-palette-btn" data-block="divider">— Divider</button>
-							<button type="button" class="aiem-palette-btn" data-block="spacer">↕ Spacer</button>
-						</div>
-						<div class="aiem-block-editor-wrap">
-							<div class="aiem-block-canvas-wrap">
-								<div id="aiem-block-canvas">
-									<p class="aiem-canvas-empty">Click a block type above to add it.</p>
-								</div>
-							</div>
-							<div class="aiem-block-props-wrap">
-								<div class="aiem-block-props-header">Properties</div>
-								<div id="aiem-block-props">
-									<p style="color:#9ca3af;font-size:13px">Click a block to edit its properties.</p>
-								</div>
-							</div>
-						</div>
-					</div>
-
-					<div id="aiem-html-editor-wrap" style="display:none">
-						<p class="description">Edit HTML directly. Merge tags: <code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{email}}</code> <code>{{site_name}}</code> <code>{{unsubscribe_url}}</code></p>
-						<textarea id="aiem-html-content" rows="22" class="large-text code aiem-html-editor"><?php echo esc_textarea( $html ); ?></textarea>
-					</div>
-
-					<div style="margin-top:10px">
-						<button type="button" id="aiem-preview-btn" class="button">Preview</button>
-					</div>
-					<div id="aiem-preview-container" style="display:none;margin-top:8px">
-						<iframe id="aiem-preview-frame" style="width:100%;height:500px;border:1px solid #ddd;border-radius:4px;"></iframe>
-					</div>
-				</div>
-
-				<input type="hidden" id="aiem-template-blocks-json" value="<?php echo esc_attr( $blocks_json ); ?>" />
+			<div class="aiem-ee-top">
+				<a class="aiem-ee-back" href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-email-editor' ) ); ?>">&larr; Templates</a>
+				<input type="text" id="aiem-ee-name" value="<?php echo esc_attr( $template->name ?? '' ); ?>" placeholder="Template name" aria-label="Template name" />
+				<span id="aiem-ee-status" class="aiem-ee-status" role="status"></span>
+				<span class="aiem-ee-grow"></span>
+				<button type="button" class="button" id="aiem-ee-undo" disabled>Undo</button>
+				<button type="button" class="button" id="aiem-ee-redo" disabled>Redo</button>
+				<button type="button" class="button" id="aiem-ee-code">View HTML</button>
+				<button type="button" class="button" id="aiem-ee-test">Send test</button>
+				<button type="button" class="button button-primary" id="aiem-ee-save">Save</button>
 			</div>
+
+			<div class="aiem-ee-body">
+				<div class="aiem-ee-left" id="aiem-ee-palette"></div>
+
+				<div class="aiem-ee-center">
+					<div id="aiem-ee-canvas"></div>
+					<div id="aiem-ee-codeview" style="display:none">
+						<p id="aiem-ee-codenote"></p>
+						<div class="aiem-ee-split">
+							<textarea id="aiem-ee-source" spellcheck="false" aria-label="Email HTML"></textarea>
+							<iframe id="aiem-ee-preview" sandbox="" title="Email preview"></iframe>
+						</div>
+					</div>
+				</div>
+
+				<div class="aiem-ee-right">
+					<div class="aiem-ee-tabs">
+						<button type="button" class="aiem-ee-tab" data-tab="block">Block</button>
+						<button type="button" class="aiem-ee-tab" data-tab="style">Email style</button>
+						<button type="button" class="aiem-ee-tab" data-tab="checks">Checks<span id="aiem-ee-check-count" style="display:none"></span></button>
+					</div>
+					<div id="aiem-ee-panel"></div>
+				</div>
+			</div>
+
+			<script type="application/json" id="aiem-ee-data"><?php echo wp_json_encode( $boot, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT ); ?></script>
 		</div>
 		<?php
 	}

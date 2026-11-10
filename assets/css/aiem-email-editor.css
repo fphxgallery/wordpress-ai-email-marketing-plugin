@@ -1,0 +1,135 @@
+/* AI Email Marketing — email template editor + gallery */
+
+/* ── Editor shell ─────────────────────────────────────────────────────── */
+.aiem-ee { margin-right: 20px; }
+.aiem-ee-top {
+	display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+	background: #fff; border: 1px solid #dcdcde; border-radius: 6px;
+	padding: 8px 12px; margin: 12px 0;
+	position: sticky; top: 32px; z-index: 50;
+}
+.aiem-ee-back { text-decoration: none; font-size: 13px; white-space: nowrap; }
+#aiem-ee-name { font-size: 15px; font-weight: 600; min-width: 220px; flex: 0 1 300px; }
+.aiem-ee-grow { flex: 1; }
+.aiem-ee-status { font-size: 12px; color: #166534; white-space: nowrap; }
+.aiem-ee-status.is-dirty { color: #6b7280; }
+.aiem-ee-status.is-warn  { color: #92400e; }
+.aiem-ee-status.is-err   { color: #b91c1c; }
+
+.aiem-ee-body {
+	display: grid; gap: 12px; align-items: start;
+	grid-template-columns: 170px minmax(0, 1fr) 280px;
+}
+.aiem-ee-left, .aiem-ee-right {
+	background: #fff; border: 1px solid #dcdcde; border-radius: 6px;
+	position: sticky; top: 96px; max-height: calc(100vh - 116px); overflow-y: auto;
+}
+.aiem-ee-left { padding: 10px; }
+.aiem-ee-center {
+	background: #e5e7eb; border: 1px solid #dcdcde; border-radius: 6px;
+	min-height: 480px; overflow-x: auto;
+}
+
+/* ── Palette ──────────────────────────────────────────────────────────── */
+.aiem-ee-group { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #6b7280; margin: 12px 0 6px; }
+.aiem-ee-group:first-child { margin-top: 2px; }
+.aiem-ee-pal {
+	display: flex; align-items: center; gap: 8px; width: 100%;
+	background: #fff; border: 1px solid #dcdcde; border-radius: 5px;
+	padding: 7px 9px; margin-bottom: 6px; font-size: 13px; color: #1f2937;
+	cursor: grab; text-align: left;
+}
+.aiem-ee-pal:hover { border-color: #7c3aed; background: #faf5ff; color: #6d28d9; }
+.aiem-ee-pal .dashicons { font-size: 17px; width: 17px; height: 17px; color: #6b7280; }
+.aiem-ee-hint { font-size: 12px; color: #6b7280; line-height: 1.5; margin: 10px 2px; }
+
+/* ── Right panel ──────────────────────────────────────────────────────── */
+.aiem-ee-tabs { display: flex; border-bottom: 1px solid #dcdcde; position: sticky; top: 0; background: #fff; z-index: 2; }
+.aiem-ee-tab {
+	flex: 1; background: none; border: 0; border-bottom: 2px solid transparent;
+	padding: 10px 6px; font-size: 13px; color: #4b5563; cursor: pointer;
+}
+.aiem-ee-tab.is-on { color: #6d28d9; border-bottom-color: #7c3aed; font-weight: 600; }
+.aiem-ee-tab:disabled { color: #c3c4c7; cursor: default; }
+#aiem-ee-check-count {
+	display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 4px;
+	background: #f59e0b; color: #fff; border-radius: 9px; font-size: 11px; line-height: 16px; font-weight: 600;
+}
+#aiem-ee-panel { padding: 12px; }
+.aiem-ee-paneltitle { font-size: 13px; font-weight: 600; margin: 0 0 12px; }
+.aiem-ee-field { margin-bottom: 12px; }
+.aiem-ee-field > label, .aiem-ee-ai > label { display: block; font-size: 12px; color: #4b5563; margin-bottom: 4px; }
+.aiem-ee-field input[type="text"], .aiem-ee-field input[type="url"],
+.aiem-ee-field select, .aiem-ee-field textarea { width: 100%; max-width: 100%; font-size: 13px; }
+.aiem-ee-range { display: flex; align-items: center; gap: 8px; }
+.aiem-ee-range input { flex: 1; min-width: 0; }
+.aiem-ee-range output { font-size: 12px; color: #4b5563; min-width: 26px; text-align: right; }
+.aiem-ee-color { display: flex; align-items: center; gap: 8px; }
+.aiem-ee-color input { width: 40px; height: 28px; padding: 0; border: 1px solid #dcdcde; border-radius: 4px; }
+.aiem-ee-color code { font-size: 11px; background: none; }
+.aiem-ee-img { display: flex; gap: 6px; }
+.aiem-ee-img input { flex: 1; min-width: 0; }
+.aiem-ee-seg { display: inline-flex; border: 1px solid #dcdcde; border-radius: 4px; overflow: hidden; }
+.aiem-ee-seg button { background: #fff; border: 0; border-right: 1px solid #dcdcde; padding: 4px 9px; cursor: pointer; color: #4b5563; }
+.aiem-ee-seg button:last-child { border-right: 0; }
+.aiem-ee-seg button.is-on { background: #ede9fe; color: #6d28d9; }
+.aiem-ee-fmt { display: flex; gap: 4px; flex-wrap: wrap; }
+.aiem-ee-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.aiem-ee-tag {
+	background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 10px;
+	padding: 1px 8px; font-size: 11px; font-family: monospace; cursor: pointer; color: #374151;
+}
+.aiem-ee-tag:hover { background: #ede9fe; border-color: #c4b5fd; color: #6d28d9; }
+.aiem-ee-presets { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; font-size: 12px; color: #4b5563; }
+.aiem-ee-ai { border-top: 1px solid #e5e7eb; padding-top: 12px; margin-top: 4px; }
+.aiem-ee-ai input { width: 100%; margin-bottom: 6px; font-size: 13px; }
+.aiem-ee-ai .dashicons { font-size: 16px; width: 16px; height: 16px; vertical-align: text-bottom; }
+.aiem-ee-ai-msg { display: block; font-size: 12px; color: #4b5563; margin-top: 6px; }
+.aiem-ee-ai-msg.is-err { color: #b91c1c; }
+
+/* ── Checks ───────────────────────────────────────────────────────────── */
+.aiem-ee-checks { margin: 0; }
+.aiem-ee-checks li { display: flex; gap: 8px; align-items: flex-start; padding: 9px 0; margin: 0; border-bottom: 1px solid #f0f0f1; font-size: 13px; }
+.aiem-ee-checks li:last-child { border-bottom: 0; }
+.aiem-ee-checks li > div { flex: 1; min-width: 0; }
+.aiem-ee-checks strong { font-weight: 500; display: block; }
+.aiem-ee-checks small { display: block; color: #6b7280; font-size: 12px; line-height: 1.4; margin-top: 2px; }
+.aiem-ee-checks .dashicons { font-size: 18px; width: 18px; height: 18px; flex: none; }
+.aiem-ee-checks .is-ok .dashicons    { color: #16a34a; }
+.aiem-ee-checks .is-warn .dashicons  { color: #d97706; }
+.aiem-ee-checks .is-error .dashicons { color: #dc2626; }
+.aiem-ee-checks .is-info .dashicons  { color: #6b7280; }
+
+/* ── Code view ────────────────────────────────────────────────────────── */
+#aiem-ee-codeview { padding: 12px; background: #fff; border-radius: 6px; }
+#aiem-ee-codenote { font-size: 12px; color: #4b5563; margin: 0 0 8px; }
+.aiem-ee-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+#aiem-ee-source { width: 100%; height: 620px; font-family: monospace; font-size: 12px; line-height: 1.5; resize: vertical; }
+#aiem-ee-source[readonly] { background: #f9fafb; }
+#aiem-ee-preview { width: 100%; height: 620px; border: 1px solid #dcdcde; border-radius: 4px; background: #fff; }
+@media (max-width: 1280px) { .aiem-ee-split { grid-template-columns: minmax(0, 1fr); } #aiem-ee-source { height: 320px; } }
+@media (max-width: 1100px) { .aiem-ee-body { grid-template-columns: 150px minmax(0, 1fr); } .aiem-ee-right { grid-column: 1 / -1; position: static; max-height: none; } }
+
+/* ── Template gallery ─────────────────────────────────────────────────── */
+.aiem-tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, 240px); gap: 16px; margin-top: 16px; }
+.aiem-tpl-card { background: #fff; border: 1px solid #dcdcde; border-radius: 6px; padding: 10px; }
+.aiem-tpl-card:hover { border-color: #a78bfa; }
+.aiem-tpl-thumb {
+	display: block; position: relative; width: 218px; height: 190px; overflow: hidden;
+	border: 1px solid #e5e7eb; border-radius: 4px; background: #f3f4f6;
+}
+.aiem-tpl-thumb iframe {
+	width: 640px; height: 560px; border: 0; pointer-events: none;
+	transform: scale(0.34); transform-origin: 0 0; background: #fff;
+}
+.aiem-tpl-thumb::after { content: ""; position: absolute; inset: 0; }
+.aiem-tpl-name { font-size: 14px; font-weight: 600; margin: 10px 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aiem-tpl-meta { font-size: 12px; color: #6b7280; margin: 0 0 8px; }
+.aiem-tpl-kind { display: inline-block; background: #f3f4f6; border-radius: 9px; padding: 0 7px; font-size: 11px; margin-right: 4px; }
+.aiem-tpl-actions { display: flex; gap: 12px; font-size: 13px; }
+.aiem-tpl-new { border-style: dashed; display: flex; flex-direction: column; justify-content: center; min-height: 270px; box-sizing: border-box; }
+.aiem-tpl-new h3 { margin: 0 0 4px; font-size: 14px; }
+.aiem-tpl-new p { margin: 0 0 10px; font-size: 12px; color: #6b7280; }
+.aiem-tpl-new a { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 4px; text-decoration: none; font-size: 13px; }
+.aiem-tpl-new a:hover { background: #faf5ff; }
+.aiem-tpl-new .dashicons { color: #7c3aed; }

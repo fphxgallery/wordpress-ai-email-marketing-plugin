@@ -1174,6 +1174,31 @@ class AIEM_DB {
 		return (bool) $wpdb->update( "{$wpdb->prefix}aiem_email_templates", $update, [ 'id' => $id ] );
 	}
 
+	public static function duplicate_email_template( int $id ): int|false {
+		$t = self::get_email_template( $id );
+		if ( ! $t ) {
+			return false;
+		}
+		return self::create_email_template( [
+			'name'         => 'Copy of ' . $t->name,
+			'blocks'       => $t->blocks,
+			'html_content' => $t->html_content,
+		] );
+	}
+
+	/** Map of template_id => number of campaigns using it. */
+	public static function get_template_usage_counts(): array {
+		global $wpdb;
+		$rows = $wpdb->get_results(
+			"SELECT template_id, COUNT(*) AS uses FROM {$wpdb->prefix}aiem_campaigns WHERE template_id > 0 GROUP BY template_id"
+		) ?: [];
+		$out = [];
+		foreach ( $rows as $row ) {
+			$out[ (int) $row->template_id ] = (int) $row->uses;
+		}
+		return $out;
+	}
+
 	public static function delete_email_template( int $id ): bool {
 		global $wpdb;
 		return (bool) $wpdb->delete( "{$wpdb->prefix}aiem_email_templates", [ 'id' => $id ], [ '%d' ] );

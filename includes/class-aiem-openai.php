@@ -127,6 +127,55 @@ class AIEM_OpenAI {
 	}
 
 	/**
+	 * Rewrite one piece of email copy. Returns the new text or WP_Error.
+	 */
+	public static function rewrite( string $text, string $instruction = '', bool $is_html = false ): string|WP_Error {
+		$api_key = get_option( 'aiem_openai_key', '' );
+		if ( ! $api_key ) {
+			return new WP_Error( 'no_key', 'OpenAI API key not configured.' );
+		}
+
+		$system = 'You are an expert email marketing copywriter. Rewrite the text you are given. '
+			. 'Keep it about the same length unless told otherwise, keep any {{merge_tags}} exactly as written, and do not add a greeting or sign-off that was not there. '
+			. ( $is_html
+				? 'The text is an HTML fragment: keep its tags (links, bold, line breaks) and only change the wording. '
+				: 'Return plain text with no HTML and no surrounding quotes. ' )
+			. 'Respond with a single JSON object containing exactly one key, "text".';
+
+		$user = ( $instruction !== '' ? "Instruction: {$instruction}\n\n" : '' ) . "Text to rewrite:\n{$text}";
+
+		$payload = [
+			'model'           => get_option( 'aiem_openai_model', 'gpt-4o' ),
+			'messages'        => [
+				[ 'role' => 'system', 'content' => $system ],
+				[ 'role' => 'user',   'content' => $user ],
+			],
+			'max_tokens'      => 800,
+			'temperature'     => 0.8,
+			'response_format' => [ 'type' => 'json_object' ],
+		];
+
+		$result = self::request( $api_key, $payload );
+		if ( is_wp_error( $result ) && stripos( $result->get_error_message(), 'response_format' ) !== false ) {
+			unset( $payload['response_format'] );
+			$result = self::request( $api_key, $payload );
+		}
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$raw    = trim( (string) ( $result['choices'][0]['message']['content'] ?? '' ) );
+		$clean  = preg_replace( '/^```[a-zA-Z]*\s*|\s*```$/', '', $raw );
+		$parsed = json_decode( $clean, true );
+		$out    = is_array( $parsed ) ? trim( (string) ( $parsed['text'] ?? '' ) ) : '';
+
+		if ( $out === '' ) {
+			return new WP_Error( 'ai_bad_format', 'AI did not return usable text. Try again.' );
+		}
+		return $out;
+	}
+
+	/**
 	 * POST to the chat completions endpoint. Returns the decoded body or WP_Error.
 	 */
 	private static function request( string $api_key, array $payload ): array|WP_Error {

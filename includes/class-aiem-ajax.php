@@ -27,6 +27,9 @@ class AIEM_Ajax {
 			'aiem_delete_form',
 			'aiem_save_email_template',
 			'aiem_delete_email_template',
+			'aiem_duplicate_email_template',
+			'aiem_test_send_template',
+			'aiem_rewrite_text',
 			'aiem_resend_non_openers',
 			'aiem_resend_campaign',
 			'aiem_process_workflow_queue',
@@ -493,6 +496,75 @@ class AIEM_Ajax {
 		}
 		AIEM_DB::delete_email_template( $id );
 		wp_send_json_success( [ 'message' => 'Template deleted.' ] );
+	}
+
+	public function duplicate_email_template(): void {
+		$this->verify_admin();
+		$id = (int) ( $_POST['template_id'] ?? 0 );
+		if ( ! $id ) {
+			wp_send_json_error( [ 'message' => 'Template ID required.' ] );
+		}
+		$new_id = AIEM_DB::duplicate_email_template( $id );
+		if ( ! $new_id ) {
+			wp_send_json_error( [ 'message' => 'Could not duplicate template.' ] );
+		}
+		wp_send_json_success( [
+			'template_id' => $new_id,
+			'redirect'    => admin_url( 'admin.php?page=aiem-email-template-edit&template_id=' . $new_id ),
+		] );
+	}
+
+	/**
+	 * Send the design currently open in the editor (saved or not) to one
+	 * address, with merge tags filled the same way a real send would.
+	 */
+	public function test_send_template(): void {
+		$this->verify_admin();
+
+		$html = wp_unslash( $_POST['html_content'] ?? '' );
+		$to   = sanitize_email( wp_unslash( $_POST['to_email'] ?? '' ) );
+		$name = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
+
+		if ( ! is_email( $to ) ) {
+			wp_send_json_error( [ 'message' => 'Enter a valid email address.' ] );
+		}
+		if ( trim( $html ) === '' ) {
+			wp_send_json_error( [ 'message' => 'Nothing to send yet.' ] );
+		}
+
+		$subscriber = (object) [ 'email' => $to, 'first_name' => 'Test', 'last_name' => 'User' ];
+		$body       = AIEM_Sender::build_email( $html, 'test_preview', $subscriber, '' );
+		$from_name  = get_option( 'aiem_from_name', get_bloginfo( 'name' ) ) ?: get_bloginfo( 'name' );
+		$from_email = get_option( 'aiem_from_email', get_option( 'admin_email' ) ) ?: get_option( 'admin_email' );
+
+		$sent = wp_mail( $to, '[TEST] ' . ( $name ?: 'Email template' ), $body, [
+			'Content-Type: text/html; charset=UTF-8',
+			"From: {$from_name} <{$from_email}>",
+		] );
+
+		if ( $sent ) {
+			wp_send_json_success( [ 'message' => "Test sent to {$to}" ] );
+		}
+		wp_send_json_error( [ 'message' => 'Could not send. Check your mail configuration.' ] );
+	}
+
+	public function rewrite_text(): void {
+		$this->verify_admin();
+
+		$is_html     = ! empty( $_POST['is_html'] );
+		$text        = wp_unslash( $_POST['text'] ?? '' );
+		$text        = $is_html ? wp_kses_post( $text ) : sanitize_textarea_field( $text );
+		$instruction = sanitize_text_field( wp_unslash( $_POST['instruction'] ?? '' ) );
+
+		if ( trim( wp_strip_all_tags( $text ) ) === '' ) {
+			wp_send_json_error( [ 'message' => 'Add some text to rewrite first.' ] );
+		}
+
+		$result = AIEM_OpenAI::rewrite( $text, $instruction, $is_html );
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( [ 'message' => $result->get_error_message() ] );
+		}
+		wp_send_json_success( [ 'text' => $is_html ? wp_kses_post( $result ) : $result ] );
 	}
 
 	// ── Form CRUD ─────────────────────────────────────────────────────────────

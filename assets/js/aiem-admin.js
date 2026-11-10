@@ -120,10 +120,7 @@ jQuery(function ($) {
 	// ── Preview ─────────────────────────────────────────────────────────
 
 	$('#aiem-preview-btn').on('click', function () {
-		var inVisual = $('#aiem-visual-editor').is(':visible');
-		var html = inVisual && aiemBlocks.length
-			? renderBlocksToEmail(aiemBlocks)
-			: $('#aiem-html-content').val();
+		var html = $('#aiem-html-content').val();
 		if (!html) { return; }
 		$('#aiem-preview-container').show();
 		var frame = document.getElementById('aiem-preview-frame');
@@ -762,311 +759,6 @@ jQuery(function ($) {
 		setTimeout(function () { $btn.text(orig); }, 1500);
 	});
 
-	// ── Visual email editor ───────────────────────────────────────────────────
-
-	var aiemBlocks = [];
-	var aiemSelectedId = null;
-	var aiemDragSrcId  = null;
-
-	var BLOCK_DEFAULTS = {
-		heading: {text: 'Your Heading', level: 'h2', align: 'left', color: '#111827'},
-		text:    {content: '<p>Your text goes here.</p>', align: 'left'},
-		button:  {text: 'Click Here', url: '#', align: 'center', bg_color: '#7c3aed', text_color: '#ffffff'},
-		image:   {src: '', alt: '', width: '100%', align: 'center', link_url: ''},
-		divider: {color: '#e5e7eb', margin: 24},
-		spacer:  {height: 32},
-	};
-
-	function genId() {
-		return 'b_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-	}
-
-	function escHtmlStr(s) {
-		return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-	}
-	function escAttrStr(s) {
-		return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-	}
-
-
-
-	function renderCanvas() {
-		var $canvas = $('#aiem-block-canvas');
-		$canvas.empty();
-		if (!aiemBlocks.length) {
-			$canvas.html('<p class="aiem-canvas-empty">Click a block type above to add it.</p>');
-			return;
-		}
-		aiemBlocks.forEach(function (block) {
-			var sel = block.id === aiemSelectedId ? ' selected' : '';
-			var $row = $('<div class="aiem-block-row' + sel + '" draggable="true" data-id="' + escAttrStr(block.id) + '"></div>');
-			$row.append('<span class="aiem-block-handle" title="Drag to reorder">⠿</span>');
-			$row.append($('<div class="aiem-block-preview"></div>').html(blockPreviewHtml(block)));
-			$row.append('<button type="button" class="aiem-block-del" data-id="' + escAttrStr(block.id) + '" title="Delete block">&times;</button>');
-			$canvas.append($row);
-		});
-		setupDrag();
-	}
-
-	function blockPreviewHtml(b) {
-		var p = b.props || {};
-		switch (b.type) {
-			case 'heading':
-				var tag = p.level || 'h2';
-				return '<' + tag + ' style="margin:0;color:' + escAttrStr(p.color || '#111827') + ';text-align:' + escAttrStr(p.align || 'left') + ';font-family:sans-serif">' + escHtmlStr(p.text) + '</' + tag + '>';
-			case 'text':
-				return '<div style="font-size:13px;color:#374151;text-align:' + escAttrStr(p.align || 'left') + '">' + (p.content || '') + '</div>';
-			case 'button':
-				return '<div style="text-align:' + escAttrStr(p.align || 'center') + '"><span style="background:' + escAttrStr(p.bg_color || '#7c3aed') + ';color:' + escAttrStr(p.text_color || '#fff') + ';padding:8px 20px;border-radius:5px;font-size:13px;display:inline-block">' + escHtmlStr(p.text || 'Button') + '</span></div>';
-			case 'image':
-				return p.src
-					? '<img src="' + escAttrStr(p.src) + '" style="max-width:100%;max-height:80px;display:block;' + (p.align === 'center' ? 'margin:auto' : '') + '" />'
-					: '<div style="background:#f3f4f6;color:#9ca3af;text-align:center;padding:14px;font-size:13px">🖼 Image (no URL set)</div>';
-			case 'divider':
-				return '<hr style="border:none;border-top:1px solid ' + escAttrStr(p.color || '#e5e7eb') + ';margin:4px 0" />';
-			case 'spacer':
-				var h = Math.min(parseInt(p.height) || 32, 40);
-				return '<div style="background:repeating-linear-gradient(45deg,#f9fafb,#f9fafb 4px,#f3f4f6 4px,#f3f4f6 8px);height:' + h + 'px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#9ca3af">Spacer ' + (p.height || 32) + 'px</div>';
-			default:
-				return '';
-		}
-	}
-
-	function selOpt(cur, val) { return cur === val ? ' selected' : ''; }
-
-	function renderPropsPanel() {
-		var $panel = $('#aiem-block-props');
-		if (!aiemSelectedId) {
-			$panel.html('<p style="color:#9ca3af;font-size:13px">Click a block to edit its properties.</p>');
-			return;
-		}
-		var block = aiemBlocks.find(function (b) { return b.id === aiemSelectedId; });
-		if (!block) { $panel.empty(); return; }
-		var p = block.props || {};
-
-		function row(label, ctrl) {
-			return '<div class="aiem-prop-row"><label class="aiem-prop-label">' + label + '</label><div class="aiem-prop-control">' + ctrl + '</div></div>';
-		}
-		function alignSel(v) {
-			return '<select data-prop="align" class="aiem-prop-input"><option value="left"' + selOpt(v,'left') + '>Left</option><option value="center"' + selOpt(v,'center') + '>Center</option><option value="right"' + selOpt(v,'right') + '>Right</option></select>';
-		}
-
-		var html = '';
-		switch (block.type) {
-			case 'heading':
-				html += row('Text', '<input type="text" data-prop="text" class="aiem-prop-input" value="' + escAttrStr(p.text) + '" />');
-				html += row('Level', '<select data-prop="level" class="aiem-prop-input"><option value="h1"' + selOpt(p.level,'h1') + '>H1</option><option value="h2"' + selOpt(p.level,'h2') + '>H2</option><option value="h3"' + selOpt(p.level,'h3') + '>H3</option></select>');
-				html += row('Align', alignSel(p.align));
-				html += row('Color', '<input type="color" data-prop="color" class="aiem-prop-input" value="' + escAttrStr(p.color || '#111827') + '" />');
-				break;
-			case 'text':
-				html += row('Content', '<textarea data-prop="content" class="aiem-prop-input" rows="5" style="width:100%;font-size:12px;font-family:monospace">' + escHtmlStr(p.content) + '</textarea>');
-				html += row('Align', alignSel(p.align));
-				break;
-			case 'button':
-				html += row('Text', '<input type="text" data-prop="text" class="aiem-prop-input" value="' + escAttrStr(p.text) + '" />');
-				html += row('URL', '<input type="text" data-prop="url" class="aiem-prop-input" value="' + escAttrStr(p.url) + '" />');
-				html += row('Align', alignSel(p.align));
-				html += row('Background', '<input type="color" data-prop="bg_color" class="aiem-prop-input" value="' + escAttrStr(p.bg_color || '#7c3aed') + '" />');
-				html += row('Text Color', '<input type="color" data-prop="text_color" class="aiem-prop-input" value="' + escAttrStr(p.text_color || '#ffffff') + '" />');
-				break;
-			case 'image':
-				html += row('Image URL', '<input type="text" data-prop="src" class="aiem-prop-input" value="' + escAttrStr(p.src) + '" placeholder="https://..." />');
-				html += row('Alt text', '<input type="text" data-prop="alt" class="aiem-prop-input" value="' + escAttrStr(p.alt) + '" />');
-				html += row('Width', '<input type="text" data-prop="width" class="aiem-prop-input" value="' + escAttrStr(p.width || '100%') + '" />');
-				html += row('Align', alignSel(p.align));
-				html += row('Link URL', '<input type="text" data-prop="link_url" class="aiem-prop-input" value="' + escAttrStr(p.link_url) + '" placeholder="https://..." />');
-				break;
-			case 'divider':
-				html += row('Color', '<input type="color" data-prop="color" class="aiem-prop-input" value="' + escAttrStr(p.color || '#e5e7eb') + '" />');
-				html += row('Margin (px)', '<input type="number" data-prop="margin" class="aiem-prop-input" value="' + (parseInt(p.margin) || 24) + '" min="0" max="100" />');
-				break;
-			case 'spacer':
-				html += row('Height (px)', '<input type="number" data-prop="height" class="aiem-prop-input" value="' + (parseInt(p.height) || 32) + '" min="4" max="200" />');
-				break;
-		}
-		$panel.html(html);
-
-		$panel.find('.aiem-prop-input').on('input change', function () {
-			var prop = $(this).data('prop');
-			var val  = $(this).val();
-			var blk  = aiemBlocks.find(function (b) { return b.id === aiemSelectedId; });
-			if (blk) {
-				blk.props[prop] = val;
-				$('#aiem-block-canvas [data-id="' + blk.id + '"] .aiem-block-preview').html(blockPreviewHtml(blk));
-			}
-		});
-	}
-
-	function setupDrag() {
-		$('#aiem-block-canvas .aiem-block-row').each(function () {
-			var el = this;
-			el.addEventListener('dragstart', function (e) {
-				aiemDragSrcId = $(el).data('id');
-				e.dataTransfer.effectAllowed = 'move';
-				$(el).addClass('aiem-drag-src');
-			});
-			el.addEventListener('dragend', function () {
-				$(el).removeClass('aiem-drag-src');
-				$('.aiem-block-row').removeClass('aiem-drag-over');
-			});
-			el.addEventListener('dragover', function (e) {
-				e.preventDefault();
-				e.dataTransfer.dropEffect = 'move';
-				$('.aiem-block-row').removeClass('aiem-drag-over');
-				$(el).addClass('aiem-drag-over');
-			});
-			el.addEventListener('drop', function (e) {
-				e.preventDefault();
-				var targetId = $(el).data('id');
-				if (aiemDragSrcId && aiemDragSrcId !== targetId) {
-					var si = aiemBlocks.findIndex(function (b) { return b.id === aiemDragSrcId; });
-					var ti = aiemBlocks.findIndex(function (b) { return b.id === targetId; });
-					var removed = aiemBlocks.splice(si, 1)[0];
-					aiemBlocks.splice(ti, 0, removed);
-					renderCanvas();
-				}
-			});
-		});
-	}
-
-	// HTML email rendering from blocks
-	function renderBlocksToEmail(blocks) {
-		if (!blocks || !blocks.length) return '';
-		var parts = blocks.map(function (b) { return blockToEmailHtml(b); }).filter(Boolean);
-		return '<div style="max-width:600px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;">\n' + parts.join('\n') + '\n</div>';
-	}
-
-	function blockToEmailHtml(b) {
-		var p = b.props || {};
-		function ea(s) { return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-		function eh(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-		switch (b.type) {
-			case 'heading':
-				var tag = p.level || 'h2';
-				return '<' + tag + ' style="text-align:' + ea(p.align||'left') + ';color:' + ea(p.color||'#111827') + ';margin:0 0 16px;padding:0;font-family:Arial,Helvetica,sans-serif;line-height:1.3;">' + eh(p.text||'') + '</' + tag + '>';
-			case 'text':
-				return '<div style="text-align:' + ea(p.align||'left') + ';color:#374151;font-size:16px;line-height:1.6;margin:0 0 16px;font-family:Arial,Helvetica,sans-serif;">' + (p.content||'') + '</div>';
-			case 'button':
-				var ml = p.align === 'right' ? 'margin-left:auto;' : (p.align === 'center' ? 'margin:0 auto;' : '');
-				return '<div style="text-align:' + ea(p.align||'center') + ';margin:0 0 20px;">' +
-					'<a href="' + ea(p.url||'#') + '" style="display:inline-block;background-color:' + ea(p.bg_color||'#7c3aed') + ';color:' + ea(p.text_color||'#ffffff') + ';padding:14px 32px;border-radius:6px;text-decoration:none;font-weight:600;font-family:Arial,Helvetica,sans-serif;font-size:16px;">' + eh(p.text||'Click Here') + '</a></div>';
-			case 'image':
-				var iSrc = p.src || '';
-				var iAlign = p.align === 'center' ? 'margin:0 auto;' : (p.align === 'right' ? 'margin-left:auto;' : '');
-				var img = '<img src="' + ea(iSrc) + '" alt="' + ea(p.alt||'') + '" style="max-width:' + ea(p.width||'100%') + ';height:auto;display:block;' + iAlign + '" />';
-				if (p.link_url) img = '<a href="' + ea(p.link_url) + '">' + img + '</a>';
-				return '<div style="margin:0 0 16px;">' + img + '</div>';
-			case 'divider':
-				return '<hr style="border:none;border-top:1px solid ' + ea(p.color||'#e5e7eb') + ';margin:' + (parseInt(p.margin)||24) + 'px 0;" />';
-			case 'spacer':
-				return '<div style="height:' + (parseInt(p.height)||32) + 'px;line-height:' + (parseInt(p.height)||32) + 'px;">&nbsp;</div>';
-			default:
-				return '';
-		}
-	}
-
-	// Tab switching (Email Editor page)
-	function switchToVisual() {
-		$('#aiem-tab-visual').addClass('active');
-		$('#aiem-tab-html').removeClass('active');
-		$('#aiem-visual-editor').show();
-		$('#aiem-html-editor-wrap').hide();
-	}
-	function switchToHtml() {
-		if (aiemBlocks.length) {
-			$('#aiem-html-content').val(renderBlocksToEmail(aiemBlocks));
-		}
-		$('#aiem-tab-visual').removeClass('active');
-		$('#aiem-tab-html').addClass('active');
-		$('#aiem-visual-editor').hide();
-		$('#aiem-html-editor-wrap').show();
-	}
-
-	// Init visual editor on Email Template Edit page
-	if ($('#aiem-template-blocks-json').length) {
-		var raw = $('#aiem-template-blocks-json').val() || '[]';
-		try { aiemBlocks = JSON.parse(raw) || []; } catch(e) { aiemBlocks = []; }
-		if (!Array.isArray(aiemBlocks)) aiemBlocks = [];
-
-		if (aiemBlocks.length) {
-			switchToVisual();
-		} else if ($('#aiem-html-content').val().trim()) {
-			switchToHtml();
-		} else {
-			switchToVisual();
-		}
-
-		$('#aiem-tab-visual').on('click', switchToVisual);
-		$('#aiem-tab-html').on('click', switchToHtml);
-
-		$('.aiem-palette-btn').on('click', function () {
-			var type = $(this).data('block');
-			var def  = BLOCK_DEFAULTS[type];
-			if (!def) return;
-			aiemBlocks.push({id: genId(), type: type, props: jQuery.extend({}, def)});
-			aiemSelectedId = aiemBlocks[aiemBlocks.length - 1].id;
-			renderCanvas();
-			renderPropsPanel();
-		});
-
-		$(document).on('click', '#aiem-block-canvas .aiem-block-row', function (e) {
-			if ($(e.target).hasClass('aiem-block-del')) return;
-			aiemSelectedId = $(this).data('id');
-			renderCanvas();
-			renderPropsPanel();
-		});
-		$(document).on('click', '.aiem-block-del', function (e) {
-			e.stopPropagation();
-			var id = $(this).data('id');
-			aiemBlocks = aiemBlocks.filter(function (b) { return b.id !== id; });
-			if (aiemSelectedId === id) aiemSelectedId = null;
-			renderCanvas();
-			renderPropsPanel();
-		});
-
-		// Save template
-		$('#aiem-template-save-btn').on('click', function () {
-			var name = $('#aiem-template-name').val().trim();
-			var $result = $('#aiem-template-save-result');
-			if (!name) {
-				$result.css('color', '#dc2626').text('Template name is required.');
-				return;
-			}
-			var inVisual = $('#aiem-visual-editor').is(':visible');
-			if (inVisual && aiemBlocks.length) {
-				$('#aiem-html-content').val(renderBlocksToEmail(aiemBlocks));
-			}
-			var blocksJson = inVisual ? JSON.stringify(aiemBlocks) : '[]';
-			var templateId = parseInt($('#aiem-template-id').val() || '0', 10);
-
-			$(this).prop('disabled', true);
-			$.post(aiemAdmin.ajaxUrl, {
-				action:       'aiem_save_email_template',
-				nonce:        aiemAdmin.nonce,
-				template_id:  templateId,
-				name:         name,
-				blocks:       blocksJson,
-				html_content: $('#aiem-html-content').val(),
-			}, function (res) {
-				$('#aiem-template-save-btn').prop('disabled', false);
-				if (res.success) {
-					$result.css('color', '#166534').text(res.data.message);
-					if (!templateId && res.data.template_id) {
-						$('#aiem-template-id').val(res.data.template_id);
-						history.replaceState(null, '', '?page=aiem-email-template-edit&template_id=' + res.data.template_id);
-						$('#aiem-template-save-btn').text('Update Template');
-					}
-				} else {
-					$result.css('color', '#dc2626').text(res.data.message);
-				}
-			});
-		});
-
-		renderCanvas();
-		renderPropsPanel();
-	}
-
 	// Campaign edit: load template into HTML textarea
 	$('#aiem-apply-template').on('click', function () {
 		var $sel = $('#aiem-load-template');
@@ -1170,6 +862,23 @@ jQuery(function ($) {
 			btn.prop('disabled', false).text('Process Queue Now');
 			$('#aiem-process-queue-result').text('Request failed.');
 		});
+	});
+
+	// Email Editor: duplicate template
+	$(document).on('click', '.aiem-tpl-duplicate', function () {
+		var $btn = $(this).prop('disabled', true);
+		$.post(aiemAdmin.ajaxUrl, {
+			action:      'aiem_duplicate_email_template',
+			nonce:       aiemAdmin.nonce,
+			template_id: $btn.data('id'),
+		}, function (res) {
+			if (res.success && res.data.redirect) {
+				window.location = res.data.redirect;
+			} else {
+				$btn.prop('disabled', false);
+				alert((res.data && res.data.message) || 'Could not duplicate template.');
+			}
+		}).fail(function () { $btn.prop('disabled', false); });
 	});
 
 	// Email Editor: delete template
