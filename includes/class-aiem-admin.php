@@ -95,12 +95,12 @@ class AIEM_Admin {
 		$max_growth = max( array_merge( $growth_values, [ 1 ] ) );
 
 		$stat_cards = [
-			[ 'label' => 'Active Subscribers', 'value' => number_format( $stats->subscribers ),  'icon' => '👥', 'color' => 'purple' ],
-			[ 'label' => 'Campaigns Sent',     'value' => number_format( $stats->campaigns_sent ),'icon' => '📨', 'color' => 'blue' ],
-			[ 'label' => 'Total Emails Sent',  'value' => number_format( $stats->total_sent ),   'icon' => '✉️', 'color' => 'teal' ],
-			[ 'label' => 'Avg Open Rate',       'value' => $stats->open_rate . '%',               'icon' => '👁', 'color' => 'green' ],
-			[ 'label' => 'Total Clicks',        'value' => number_format( $stats->total_clicked ),'icon' => '🖱', 'color' => 'orange' ],
-			[ 'label' => 'Active Workflows',    'value' => number_format( $stats->active_workflows ),'icon' => '⚡', 'color' => 'pink' ],
+			[ 'label' => 'Active Subscribers', 'value' => number_format( $stats->subscribers ),  'icon' => 'groups', 'color' => 'purple' ],
+			[ 'label' => 'Campaigns Sent',     'value' => number_format( $stats->campaigns_sent ),'icon' => 'email-alt', 'color' => 'blue' ],
+			[ 'label' => 'Total Emails Sent',  'value' => number_format( $stats->total_sent ),   'icon' => 'email', 'color' => 'teal' ],
+			[ 'label' => 'Avg Open Rate',       'value' => $stats->open_rate . '%',               'icon' => 'visibility', 'color' => 'green' ],
+			[ 'label' => 'Total Clicks',        'value' => number_format( $stats->total_clicked ),'icon' => 'admin-links', 'color' => 'orange' ],
+			[ 'label' => 'Active Workflows',    'value' => number_format( $stats->active_workflows ),'icon' => 'update', 'color' => 'pink' ],
 		];
 		?>
 		<div class="wrap aiem-wrap">
@@ -109,7 +109,7 @@ class AIEM_Admin {
 			<div class="aiem-stat-grid">
 				<?php foreach ( $stat_cards as $card ) : ?>
 				<div class="aiem-stat-card aiem-stat-card--<?php echo esc_attr( $card['color'] ); ?>">
-					<div class="aiem-stat-icon"><?php echo $card['icon']; ?></div>
+					<div class="aiem-stat-icon"><span class="dashicons dashicons-<?php echo esc_attr( $card['icon'] ); ?>" aria-hidden="true"></span></div>
 					<div class="aiem-stat-value"><?php echo esc_html( $card['value'] ); ?></div>
 					<div class="aiem-stat-label"><?php echo esc_html( $card['label'] ); ?></div>
 				</div>
@@ -260,7 +260,7 @@ class AIEM_Admin {
 		?>
 		<div class="wrap aiem-wrap">
 			<h1>
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-forms' ) ); ?>" style="font-size:14px;font-weight:400;vertical-align:middle;margin-right:8px">← Forms</a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-forms' ) ); ?>" class="aiem-back">&larr; Forms</a>
 				<?php echo $form ? 'Edit Form: ' . esc_html( $form->name ) : 'New Form'; ?>
 			</h1>
 			<?php $this->show_notice(); ?>
@@ -539,7 +539,7 @@ class AIEM_Admin {
 		$categories = get_categories( [ 'hide_empty' => false, 'orderby' => 'name', 'order' => 'ASC' ] );
 		?>
 		<div class="wrap aiem-wrap">
-			<h1>Workflows <button type="button" id="aiem-process-queue-btn" class="button" style="margin-left:12px;font-size:13px;">Process Queue Now</button> <span id="aiem-process-queue-result" style="font-size:13px;margin-left:8px;color:#555;"></span></h1>
+			<h1>Workflows <button type="button" id="aiem-process-queue-btn" class="button">Process Queue Now</button> <span id="aiem-process-queue-result"></span></h1>
 			<?php $this->show_notice(); ?>
 
 			<div class="aiem-two-col">
@@ -778,14 +778,15 @@ class AIEM_Admin {
 		<div class="wrap aiem-wrap">
 			<h1>Logs</h1>
 
-			<form method="get" style="margin-bottom:16px">
+			<form method="get" class="aiem-toolbar">
 				<input type="hidden" name="page" value="aiem-logs" />
-				<select name="event_type" onchange="this.form.submit()">
+				<label for="aiem-log-filter">Event</label>
+				<select name="event_type" id="aiem-log-filter" onchange="this.form.submit()">
 					<?php foreach ( $event_types as $val => $label ) : ?>
 						<option value="<?php echo esc_attr( $val ); ?>" <?php selected( $event_filter, $val ); ?>><?php echo esc_html( $label ); ?></option>
 					<?php endforeach; ?>
 				</select>
-				<span style="margin-left:8px;color:#6b7280;font-size:13px"><?php echo number_format( $total ); ?> entries</span>
+				<span><?php echo number_format( $total ); ?> entries</span>
 			</form>
 
 			<?php if ( empty( $logs ) ) : ?>
@@ -910,7 +911,10 @@ class AIEM_Admin {
 		$woo_active    = function_exists( 'wc_get_products' );
 		?>
 		<div class="wrap aiem-wrap">
-			<h1><?php echo $campaign ? 'Edit Campaign: ' . esc_html( $campaign->name ) : 'New Campaign'; ?></h1>
+			<h1>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-campaigns' ) ); ?>" class="aiem-back">&larr; Campaigns</a>
+				<?php echo $campaign ? 'Edit Campaign: ' . esc_html( $campaign->name ) : 'New Campaign'; ?>
+			</h1>
 			<?php $this->show_notice(); ?>
 
 			<div class="aiem-campaign-editor">
@@ -1132,9 +1136,9 @@ class AIEM_Admin {
 			?>
 			<div class="wrap aiem-wrap">
 				<h1>
-					<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-audience' ) ); ?>" style="font-size:14px;font-weight:400;vertical-align:middle;margin-right:8px;">← Lists</a>
+					<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-audience' ) ); ?>" class="aiem-back">&larr; Lists</a>
 					<?php echo esc_html( $current_list->name ?? 'List' ); ?>
-					<span style="font-size:14px;font-weight:400;color:#6b7280;margin-left:8px;"><?php echo number_format( $total ); ?> subscribers</span>
+					<span class="aiem-h1-meta"><?php echo number_format( $total ); ?> subscribers</span>
 				</h1>
 				<?php $this->show_notice(); ?>
 
@@ -1269,9 +1273,7 @@ class AIEM_Admin {
 					</div>
 				</div>
 
-				<hr style="margin:32px 0;border:none;border-top:1px solid #e5e7eb;" />
-
-				<h2 style="margin-bottom:16px">Segments</h2>
+				<h2>Segments</h2>
 				<div class="aiem-two-col">
 					<div>
 						<h3>Create Segment</h3>
@@ -1386,9 +1388,10 @@ class AIEM_Admin {
 		<div class="wrap aiem-wrap">
 			<h1>Reports</h1>
 
-			<form method="get">
+			<form method="get" class="aiem-toolbar">
 				<input type="hidden" name="page" value="aiem-reports" />
-				<select name="campaign_id" onchange="this.form.submit()">
+				<label for="aiem-report-campaign">Campaign</label>
+				<select name="campaign_id" id="aiem-report-campaign" onchange="this.form.submit()">
 					<option value="">— Select Campaign —</option>
 					<?php foreach ( $campaigns as $c ) : ?>
 						<option value="<?php echo (int) $c->id; ?>" <?php selected( $campaign_id, (int) $c->id ); ?>>
@@ -1647,7 +1650,6 @@ class AIEM_Admin {
 				<p class="submit"><button type="submit" class="button button-primary">Save Settings</button></p>
 			</form>
 
-			<hr />
 			<h2 class="title">Maintenance</h2>
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" onsubmit="return confirm('Delete all log entries older than the specified number of days?');">
 				<?php wp_nonce_field( 'aiem_purge_logs' ); ?>
@@ -1883,7 +1885,7 @@ class AIEM_Admin {
 			<h1>Info &amp; Setup Guide</h1>
 			<p>Follow these steps to get AI Email Marketing running on a fresh install.</p>
 
-			<div style="max-width:860px">
+			<div class="aiem-panel aiem-prose" style="max-width:860px">
 
 				<h2>Step 1 — Configure Sending Defaults</h2>
 				<p>Go to <strong>AI Email Marketing → Settings</strong> and fill in:</p>
