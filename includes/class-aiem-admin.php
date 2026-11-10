@@ -1292,15 +1292,18 @@ class AIEM_Admin {
 					break;
 				}
 			}
-			$page        = max( 1, (int) ( $_GET['paged'] ?? 1 ) );
-			$subscribers = AIEM_DB::get_subscribers( $list_id, $page, 50 );
-			$total       = AIEM_DB::count_subscribers( $list_id, '' );
+			$search      = sanitize_text_field( wp_unslash( $_GET['s'] ?? '' ) );
+			$total_all   = AIEM_DB::count_subscribers( $list_id, '' );
+			$total       = $search !== '' ? AIEM_DB::count_subscribers_search( $list_id, $search ) : $total_all;
+			$last_page   = max( 1, (int) ceil( $total / 50 ) );
+			$page        = min( $last_page, max( 1, (int) ( $_GET['paged'] ?? 1 ) ) );
+			$subscribers = AIEM_DB::get_subscribers( $list_id, $page, 50, '', $search );
 			?>
 			<div class="wrap aiem-wrap">
 				<h1>
 					<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-audience' ) ); ?>" class="aiem-back">&larr; Lists</a>
 					<?php echo esc_html( $current_list->name ?? 'List' ); ?>
-					<span class="aiem-h1-meta"><?php echo number_format( $total ); ?> subscribers</span>
+					<span class="aiem-h1-meta"><?php echo number_format( $total_all ); ?> subscribers</span>
 				</h1>
 				<?php $this->show_notice(); ?>
 
@@ -1333,6 +1336,20 @@ class AIEM_Admin {
 						</div>
 					</div>
 				</div>
+
+				<form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>" class="aiem-search-bar" role="search">
+					<input type="hidden" name="page" value="aiem-audience" />
+					<input type="hidden" name="list_id" value="<?php echo (int) $list_id; ?>" />
+					<label for="aiem-sub-search" class="screen-reader-text">Search subscribers</label>
+					<input type="search" id="aiem-sub-search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="Search email or name" class="regular-text" />
+					<button type="submit" class="button">Search</button>
+					<?php if ( $search !== '' ) : ?>
+						<span class="aiem-search-meta">
+							<?php echo esc_html( sprintf( '%s %s for “%s”', number_format( $total ), $total === 1 ? 'match' : 'matches', $search ) ); ?>
+							· <a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-audience&list_id=' . $list_id ) ); ?>">Clear</a>
+						</span>
+					<?php endif; ?>
+				</form>
 
 				<?php if ( ! empty( $subscribers ) ) : ?>
 				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" id="aiem-bulk-form">
@@ -1375,7 +1392,9 @@ class AIEM_Admin {
 						</tbody>
 					</table>
 				</form>
-				<?php $this->pagination( $total, 50, $page, [ 'page' => 'aiem-audience', 'list_id' => $list_id ] ); ?>
+				<?php $this->pagination( $total, 50, $page, array_filter( [ 'page' => 'aiem-audience', 'list_id' => $list_id, 's' => $search ] ) ); ?>
+				<?php elseif ( $search !== '' ) : ?>
+					<p>No subscribers match “<?php echo esc_html( $search ); ?>”.</p>
 				<?php else : ?>
 					<p>No subscribers on this list yet.</p>
 				<?php endif; ?>
@@ -2216,18 +2235,39 @@ class AIEM_Admin {
 		<?php
 	}
 
+	/** Pager: « ‹ [page] of N › », with a jump-to-page box. */
 	private function pagination( int $total, int $per_page, int $current, array $query_args ): void {
-		$pages = ceil( $total / $per_page );
+		$pages = (int) ceil( $total / $per_page );
 		if ( $pages <= 1 ) {
 			return;
 		}
-		echo '<div class="tablenav"><div class="tablenav-pages">';
-		for ( $i = 1; $i <= $pages; $i++ ) {
-			$url = add_query_arg( array_merge( $query_args, [ 'paged' => $i ] ), admin_url( 'admin.php' ) );
-			echo $i === $current
-				? '<span class="current">' . $i . '</span> '
-				: '<a href="' . esc_url( $url ) . '">' . $i . '</a> ';
-		}
-		echo '</div></div>';
+		$current = min( $pages, max( 1, $current ) );
+		$url     = function ( int $n ) use ( $query_args ): string {
+			return esc_url( add_query_arg( array_merge( $query_args, [ 'paged' => $n ] ), admin_url( 'admin.php' ) ) );
+		};
+		$arrow = function ( int $n, string $glyph, string $label, bool $enabled ) use ( $url ): string {
+			return $enabled
+				? '<a class="aiem-pager-btn" href="' . $url( $n ) . '" aria-label="' . esc_attr( $label ) . '" title="' . esc_attr( $label ) . '">' . $glyph . '</a>'
+				: '<span class="aiem-pager-btn is-disabled" aria-hidden="true">' . $glyph . '</span>';
+		};
+		$from = ( $current - 1 ) * $per_page + 1;
+		$to   = min( $total, $current * $per_page );
+		?>
+		<div class="tablenav"><div class="aiem-pager">
+			<span class="aiem-pager-count"><?php echo esc_html( number_format( $from ) . '–' . number_format( $to ) . ' of ' . number_format( $total ) ); ?></span>
+			<?php echo $arrow( 1, '&laquo;', 'First page', $current > 1 ); ?>
+			<?php echo $arrow( $current - 1, '&lsaquo;', 'Previous page', $current > 1 ); ?>
+			<form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>" class="aiem-pager-jump">
+				<?php foreach ( $query_args as $k => $v ) : ?>
+					<input type="hidden" name="<?php echo esc_attr( $k ); ?>" value="<?php echo esc_attr( $v ); ?>" />
+				<?php endforeach; ?>
+				<label for="aiem-pager-input" class="screen-reader-text">Current page</label>
+				<input type="number" id="aiem-pager-input" name="paged" value="<?php echo (int) $current; ?>" min="1" max="<?php echo (int) $pages; ?>" />
+				<span>of <?php echo number_format( $pages ); ?></span>
+			</form>
+			<?php echo $arrow( $current + 1, '&rsaquo;', 'Next page', $current < $pages ); ?>
+			<?php echo $arrow( $pages, '&raquo;', 'Last page', $current < $pages ); ?>
+		</div></div>
+		<?php
 	}
 }

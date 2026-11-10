@@ -336,13 +336,34 @@ class AIEM_DB {
 
 	// ── Subscribers ────────────────────────────────────────────────────────
 
-	public static function get_subscribers( int $list_id, int $page = 1, int $per_page = 50, string $status = '' ): array {
+	/**
+	 * WHERE fragment for a subscriber search. Every word must match the
+	 * email, first name or last name, so "jane smi" finds Jane Smith.
+	 */
+	private static function subscriber_search_where( string $search, string $alias = 's' ): string {
+		global $wpdb;
+		$sql = '';
+		foreach ( preg_split( '/\s+/', trim( $search ) ) as $word ) {
+			if ( $word === '' ) {
+				continue;
+			}
+			$like = '%' . $wpdb->esc_like( $word ) . '%';
+			$sql .= $wpdb->prepare(
+				" AND ({$alias}.email LIKE %s OR {$alias}.first_name LIKE %s OR {$alias}.last_name LIKE %s)",
+				$like, $like, $like
+			);
+		}
+		return $sql;
+	}
+
+	public static function get_subscribers( int $list_id, int $page = 1, int $per_page = 50, string $status = '', string $search = '' ): array {
 		global $wpdb;
 		$offset = ( $page - 1 ) * $per_page;
 		$where  = $wpdb->prepare( 's.list_id = %d', $list_id );
 		if ( $status ) {
 			$where .= $wpdb->prepare( ' AND s.status = %s', $status );
 		}
+		$where .= self::subscriber_search_where( $search );
 		return $wpdb->get_results(
 			"SELECT s.*,
 			        MAX(sn.opened_at)  AS last_opened_at,
@@ -369,6 +390,15 @@ class AIEM_DB {
 				"SELECT COUNT(*) FROM {$wpdb->prefix}aiem_subscribers WHERE list_id = %d AND status = %s",
 				$list_id, $status
 			)
+		);
+	}
+
+	/** Count subscribers on a list matching a search (all statuses). */
+	public static function count_subscribers_search( int $list_id, string $search ): int {
+		global $wpdb;
+		return (int) $wpdb->get_var(
+			$wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}aiem_subscribers s WHERE s.list_id = %d", $list_id )
+			. self::subscriber_search_where( $search )
 		);
 	}
 
