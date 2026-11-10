@@ -36,7 +36,7 @@ jQuery(function ($) {
 				$msg.addClass('error').text(res.data.message).show();
 			}
 		}).fail(function () {
-			$btn.prop('disabled', false);
+			$btn.prop('disabled', false).text($btn.data('original-text') || 'Subscribe');
 			$msg.addClass('error').text('Something went wrong. Please try again.').show();
 		});
 	});

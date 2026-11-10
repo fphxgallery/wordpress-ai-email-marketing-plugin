@@ -591,7 +591,11 @@ class AIEM_Ajax {
 	}
 
 	public function subscribe(): void {
-		check_ajax_referer( 'aiem_frontend_nonce', 'nonce' );
+		// No nonce check here on purpose. The form sits on pages that page
+		// caches (Cloudflare etc.) keep for days, so the nonce baked into the
+		// HTML expires and every signup would fail. A nonce adds nothing for
+		// an anonymous signup anyway; abuse is handled by the honeypot, the
+		// per-IP rate limit and (optionally) double opt-in.
 
 		// Honeypot: real users never fill this hidden field. Pretend success to bots.
 		if ( ! empty( $_POST['aiem_hp'] ) ) {

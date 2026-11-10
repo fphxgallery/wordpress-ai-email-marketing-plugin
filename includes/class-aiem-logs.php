@@ -19,6 +19,7 @@ class AIEM_Logs {
 	const EVENT_WORKFLOW_FAILED  = 'workflow_failed';
 	const EVENT_CRON_CHECK       = 'cron_check';
 	const EVENT_CRON_BATCH       = 'cron_batch';
+	const EVENT_CONFIRM_EMAIL    = 'confirm_email';
 
 	public static function log( string $event_type, array $data = [] ): void {
 		AIEM_DB::insert_log( $event_type, $data );

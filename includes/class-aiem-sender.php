@@ -8,11 +8,15 @@ class AIEM_Sender {
 
 	private static int $current_send_id = 0;
 
+	/** Message of the most recent wp_mail() failure in this request. */
+	public static string $last_mail_error = '';
+
 	public static function init(): void {
 		add_action( 'wp_mail_failed', [ __CLASS__, 'handle_mail_failed' ] );
 	}
 
 	public static function handle_mail_failed( WP_Error $error ): void {
+		self::$last_mail_error = (string) $error->get_error_message();
 		if ( ! self::$current_send_id ) {
 			return;
 		}
@@ -547,7 +551,8 @@ class AIEM_Sender {
 			. '<p style="color:#999;font-size:13px;">If you didn\'t sign up for this, you can safely ignore this email.</p>'
 			. '</div>';
 
-		return wp_mail(
+		self::$last_mail_error = '';
+		$sent = wp_mail(
 			$subscriber->email,
 			'Confirm your subscription to ' . $site_name,
 			$html,
@@ -556,6 +561,13 @@ class AIEM_Sender {
 				"From: {$from_name} <{$from_email}>",
 			]
 		);
+		AIEM_Logs::log( AIEM_Logs::EVENT_CONFIRM_EMAIL, array_filter( [
+			'subscriber_id' => $subscriber_id,
+			'email'         => $subscriber->email,
+			'sent'          => $sent,
+			'error'         => $sent ? '' : ( self::$last_mail_error ?: 'wp_mail() returned false' ),
+		], fn( $v ) => $v !== '' ) );
+		return $sent;
 	}
 
 	public static function send_test( int $campaign_id, string $to_email ): bool {

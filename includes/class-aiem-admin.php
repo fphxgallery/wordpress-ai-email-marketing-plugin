@@ -924,6 +924,7 @@ class AIEM_Admin {
 			''                  => 'All Events',
 			'subscribe'         => 'Subscribe',
 			'confirm'           => 'Confirm',
+			'confirm_email'     => 'Confirmation Email',
 			'unsubscribe'       => 'Unsubscribe',
 			'open'              => 'Open',
 			'click'             => 'Click',

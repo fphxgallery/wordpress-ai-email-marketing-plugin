@@ -171,6 +171,7 @@ class AIEM_Workflows {
 			if ( $wf->action_type === self::ACTION_SEND_EMAIL ) {
 				$subscriber = AIEM_DB::get_subscriber( (int) $item->subscriber_id );
 				$sent       = false;
+				self::$skip_reason = $subscriber ? '' : 'Subscriber no longer exists.';
 
 				// The "is this person still subscribed?" check lives in
 				// send_inline_email(), because it only applies when the email
@@ -188,16 +189,20 @@ class AIEM_Workflows {
 
 				AIEM_Logs::log(
 					$sent ? AIEM_Logs::EVENT_WORKFLOW_SENT : AIEM_Logs::EVENT_WORKFLOW_FAILED,
-					[
+					array_filter( [
 						'subscriber_id' => $item->subscriber_id,
 						'workflow_id'   => $wf->id,
 						'workflow_name' => $wf->name,
 						'subject'       => $wf->action_subject,
-					]
+						'error'         => $sent ? '' : self::$skip_reason,
+					], fn( $v ) => $v !== '' )
 				);
 			}
 		}
 	}
+
+	/** Why the last send_inline_email() call did not send, for the log. */
+	private static string $skip_reason = '';
 
 	private static function send_inline_email( object $wf, object $subscriber, ?WP_Post $post = null, array $context = [] ): bool {
 		$send_to = self::replace_subscriber_tags( $wf->action_send_to ?: '{{EMAIL}}', $subscriber );
@@ -213,6 +218,7 @@ class AIEM_Workflows {
 		$content = self::replace_context_tags( $content, $context );
 
 		if ( ! $send_to || ! $subject || ! $content ) {
+			self::$skip_reason = 'Send to, subject or content is empty.';
 			return false;
 		}
 
@@ -222,6 +228,7 @@ class AIEM_Workflows {
 
 		// Never email a subscriber who has unsubscribed, bounced or not confirmed.
 		if ( $to_subscriber && ( $subscriber->status ?? '' ) !== 'subscribed' ) {
+			self::$skip_reason = 'Subscriber status is ' . ( $subscriber->status ?? 'unknown' ) . ', not subscribed.';
 			return false;
 		}
 
@@ -259,16 +266,37 @@ class AIEM_Workflows {
 			$content = str_replace( '{{unsubscribe_url}}', esc_url( home_url( '/' ) ), $content );
 		}
 
-		return (bool) wp_mail( $send_to, $subject, $content, $headers );
+		AIEM_Sender::$last_mail_error = '';
+		$sent = (bool) wp_mail( $send_to, $subject, $content, $headers );
+		if ( ! $sent ) {
+			self::$skip_reason = AIEM_Sender::$last_mail_error ?: 'wp_mail() returned false.';
+		}
+		return $sent;
 	}
 
+	/**
+	 * Fill subscriber and site tags. Case, spaces and underscores don't
+	 * matter, so {{SITENAME}}, {{site_name}} and {{ Site Name }} all work.
+	 * Unknown tags are left as they are.
+	 */
 	private static function replace_subscriber_tags( string $text, object $subscriber ): string {
-		$first = $subscriber->first_name ?? '';
-		$last  = $subscriber->last_name ?? '';
-		$email = $subscriber->email ?? '';
-		return str_replace(
-			[ '{{EMAIL}}', '{{email}}', '{{first_name}}', '{{last_name}}', '{{full_name}}', '{{site_name}}', '{{site_url}}' ],
-			[ $email, $email, $first, $last, trim( "$first $last" ), get_bloginfo( 'name' ), home_url() ],
+		$first  = $subscriber->first_name ?? '';
+		$last   = $subscriber->last_name ?? '';
+		$values = [
+			'email'     => $subscriber->email ?? '',
+			'firstname' => $first,
+			'lastname'  => $last,
+			'fullname'  => trim( "$first $last" ),
+			'name'      => trim( "$first $last" ),
+			'sitename'  => get_bloginfo( 'name' ),
+			'siteurl'   => home_url(),
+		];
+		return (string) preg_replace_callback(
+			'/\{\{\s*([A-Za-z_ ]+?)\s*\}\}/',
+			function ( $m ) use ( $values ) {
+				$key = strtolower( str_replace( [ '_', ' ' ], '', $m[1] ) );
+				return array_key_exists( $key, $values ) ? $values[ $key ] : $m[0];
+			},
 			$text
 		);
 	}
@@ -278,7 +306,7 @@ class AIEM_Workflows {
 		$excerpt = $post->post_excerpt
 			?: wp_trim_words( wp_strip_all_tags( $post->post_content ), 30, '…' );
 
-		return str_replace(
+		return str_ireplace(
 			[ '{{post_title}}', '{{post_url}}', '{{post_excerpt}}', '{{post_author}}' ],
 			[ esc_html( $post->post_title ), esc_url( get_permalink( $post->ID ) ), esc_html( $excerpt ), esc_html( $author ) ],
 			$text
@@ -286,7 +314,7 @@ class AIEM_Workflows {
 	}
 
 	private static function replace_context_tags( string $text, array $context ): string {
-		return str_replace(
+		return str_ireplace(
 			[ '{{DATE}}',                          '{{SUBJECT}}',                              '{{COUNT}}' ],
 			[
 				$context['campaign_date']    ?? current_time( 'Y-m-d H:i' ),
