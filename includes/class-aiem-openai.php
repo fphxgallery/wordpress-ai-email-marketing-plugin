@@ -6,21 +6,51 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class AIEM_OpenAI {
 
-	/**
-	 * Returns array{ subject: string, preview_text: string, html: string } or WP_Error.
-	 */
+	/** Default instructions for "Generate with AI" without a template. */
+	public static function default_body_prompt(): string {
+		return 'You are an expert email marketing copywriter. Write the HTML for the body of a marketing email — no <html>, <head> or <body> tags, no <style> blocks, no scripts. '
+			. 'Put inline CSS on every element and keep the layout email-safe: one centered column no wider than 600px, tables where layout matters, web-safe fonts. '
+			. 'Structure: an attention-grabbing <h1> headline, a short intro paragraph, product highlights if products are provided (image, name, price, a one-line pitch and a link), '
+			. 'and one clear call-to-action button made as a styled <a> link. Keep the copy concise and conversion-focused.';
+	}
+
+	/** Default instructions for "Generate with AI" when an Email Editor template is selected. */
 	public static function default_template_prompt(): string {
 		return 'You are an expert email marketing copywriter. You will be given an HTML email template and a content brief. '
 			. 'Your ONLY job is to fill in the content — do NOT change any HTML tags, attributes, or style properties. '
-			. 'Copy every tag, every attribute name, and every attribute value character-for-character from the template, with these two exceptions only: '
+			. 'Copy every tag, every attribute name, and every attribute value character-for-character from the template, with these exceptions only: '
 			. '(1) Text nodes between tags — replace placeholder text ("fillmorephx title", "product title", "product text", "Your footer", "Your Heading", "Your text goes here", "Click Here", etc.) with compelling real content based on the brief. '
-			. '(2) The src and alt attributes on <img> tags — if src is empty, supply a relevant publicly accessible image URL; always set a descriptive alt. '
-			. 'Critical: styled button links look like <a href="..." style="...">Label</a> — you must keep the entire style attribute exactly as-is and only change the visible label text and href URL. Never strip or simplify a style attribute. '
-			. 'For footer placeholder text: replace with site name, a short tagline, and the current year. '
+			. '(2) The src and alt attributes on <img> tags — use the product image URL when one is provided; never invent an image URL (if there is none, keep src as it is in the template); always write a descriptive alt. '
+			. '(3) The href of links and buttons — use the product URLs provided, or the site URL; never invent a URL. '
+			. 'Critical: styled button links look like <a href="..." style="...">Label</a> — keep the entire style attribute exactly as-is and only change the visible label and the href. Never strip or simplify a style attribute. '
+			. 'For footer placeholder text: use the site name, a short tagline, and the current year. '
 			. 'Multi-product layout rule: if multiple products are provided, treat everything before the first <hr> as the "product block" and everything after the last <hr> as the "footer block". '
 			. 'Fill the first product block with product 1. Then for each additional product, append an <hr> (copied exactly from the template) followed by a copy of the product block filled with that product\'s details. '
 			. 'Finally append the footer block at the end. Keep all HTML and styles exactly as-is. '
 			. 'Return the complete filled template as the html field.';
+	}
+
+	/**
+	 * Clean a prompt typed into Settings. Prompts are plain text sent to the
+	 * API, so tags like <img> are kept (sanitize_textarea_field() strips them,
+	 * which garbled the instructions). Admin-only input; escaped on output.
+	 */
+	public static function sanitize_prompt( string $text ): string {
+		$text = wp_check_invalid_utf8( $text );
+		$text = str_replace( [ "\r\n", "\r" ], "\n", $text );
+		$text = preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $text );
+		return trim( $text );
+	}
+
+	/**
+	 * Old default prompts, used once to repair copies that Settings saved
+	 * with their HTML tag names stripped out (before 1.3.8).
+	 */
+	public static function legacy_default_prompts(): array {
+		return [
+			'aiem_system_prompt'          => 'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.',
+			'aiem_template_system_prompt' => 'You are an expert email marketing copywriter. You will be given an HTML email template and a content brief. Your ONLY job is to fill in the content — do NOT change any HTML tags, attributes, or style properties. Copy every tag, every attribute name, and every attribute value character-for-character from the template, with these two exceptions only: (1) Text nodes between tags — replace placeholder text ("fillmorephx title", "product title", "product text", "Your footer", "Your Heading", "Your text goes here", "Click Here", etc.) with compelling real content based on the brief. (2) The src and alt attributes on <img> tags — if src is empty, supply a relevant publicly accessible image URL; always set a descriptive alt. Critical: styled button links look like <a href="..." style="...">Label</a> — you must keep the entire style attribute exactly as-is and only change the visible label text and href URL. Never strip or simplify a style attribute. For footer placeholder text: replace with site name, a short tagline, and the current year. Multi-product layout rule: if multiple products are provided, treat everything before the first <hr> as the "product block" and everything after the last <hr> as the "footer block". Fill the first product block with product 1. Then for each additional product, append an <hr> (copied exactly from the template) followed by a copy of the product block filled with that product\'s details. Finally append the footer block at the end. Keep all HTML and styles exactly as-is. Return the complete filled template as the html field.',
+		];
 	}
 
 	/** Model used when none has been saved in Settings. */
@@ -151,13 +181,14 @@ class AIEM_OpenAI {
 		if ( $template_html ) {
 			$body_instructions = get_option( 'aiem_template_system_prompt', self::default_template_prompt() );
 		} else {
-			$body_instructions = get_option(
-				'aiem_system_prompt',
-				'You are an expert email marketing copywriter. Generate ONLY the HTML email body content — no <html>, <body>, or <head> tags. Use inline CSS for all styling. Create compelling, conversion-focused copy. Structure: an attention-grabbing H1 headline, a brief intro paragraph, product highlights (if products provided), and a clear CTA button.'
-			);
+			$body_instructions = get_option( 'aiem_system_prompt', self::default_body_prompt() );
 		}
 
+		// Facts the model cannot know, and a guard against made-up details.
+		// Added to every prompt, including custom ones saved in Settings.
 		$system_prompt = $body_instructions . "\n\n"
+			. 'Context: today is ' . wp_date( 'l, F j, Y' ) . '. The sender is ' . get_bloginfo( 'name' ) . ' (' . home_url( '/' ) . '). '
+			. "Only use prices, dates, offers and URLs that appear in the brief or the product list; never invent them.\n\n"
 			. "Always respond with a single JSON object (no markdown, no code fences) containing exactly three keys:\n"
 			. "  \"subject\"      — a compelling email subject line (under 60 characters)\n"
 			. "  \"preview_text\" — inbox preview text that complements the subject (under 100 characters)\n"

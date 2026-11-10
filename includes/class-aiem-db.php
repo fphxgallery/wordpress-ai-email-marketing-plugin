@@ -228,6 +228,21 @@ class AIEM_DB {
 			update_option( 'aiem_fix_prompt_slashes', 1 );
 		}
 
+		// Before 1.3.8 Settings saved prompts through sanitize_textarea_field(),
+		// which deletes anything that looks like an HTML tag ("no <html>, <body>"
+		// became "no , ,"). A saved prompt that is exactly a stripped copy of an
+		// old default was never edited: remove it so the current default applies.
+		// Edited prompts can't be repaired automatically and are left alone.
+		if ( ! get_option( 'aiem_fix_prompt_tags' ) ) {
+			foreach ( AIEM_OpenAI::legacy_default_prompts() as $key => $old_default ) {
+				$saved = get_option( $key, null );
+				if ( is_string( $saved ) && ( trim( $saved ) === sanitize_textarea_field( $old_default ) || trim( $saved ) === $old_default ) ) {
+					delete_option( $key );
+				}
+			}
+			update_option( 'aiem_fix_prompt_tags', 1 );
+		}
+
 		// Backfill per-send unsubscribe times from the event log (MySQL only;
 		// the SQLite dev driver does not translate multi-table UPDATE).
 		if ( ! get_option( 'aiem_fix_unsub_backfill' ) ) {
