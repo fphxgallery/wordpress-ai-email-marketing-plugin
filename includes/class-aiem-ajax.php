@@ -180,37 +180,30 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'No audience selected. Choose a list or segment.' ] );
 		}
 
+		// Atomic claim: a second click (or a cron run) while this campaign is
+		// already sending gets rejected instead of corrupting its status.
+		$prev_status = (string) $campaign->status;
+		if ( ! AIEM_DB::claim_campaign_for_send( $campaign_id ) ) {
+			wp_send_json_error( [ 'message' => 'This campaign is already sending.' ] );
+		}
+
 		// Regenerate AI content for recurring AI campaigns, same as the cron path.
 		if ( $campaign->recur_schedule && $campaign->ai_prompt ) {
-			$products = [];
-			if ( function_exists( 'wc_get_products' ) ) {
-				$cat_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_category_ids ?? '[]', true ) ?: [] ) );
-				$tag_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_tag_ids ?? '[]', true ) ?: [] ) );
-				$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
-			}
-			$tpl_html = '';
-			if ( ! empty( $campaign->template_id ) ) {
-				$tpl = AIEM_DB::get_email_template( (int) $campaign->template_id );
-				if ( $tpl ) {
-					$tpl_html = $tpl->html_content;
-				}
-			}
-			$result = AIEM_OpenAI::generate( $campaign->ai_prompt, $products, $tpl_html );
-			if ( ! is_wp_error( $result ) ) {
-				$update = [ 'html_content' => $result['html'] ];
-				if ( $result['subject'] )      { $update['subject']   = $result['subject']; }
-				if ( $result['preview_text'] ) { $update['preheader'] = $result['preview_text']; }
-				AIEM_DB::update_campaign( $campaign_id, $update );
-				$campaign = AIEM_DB::get_campaign( $campaign_id );
+			$regen = AIEM_OpenAI::regenerate_campaign( $campaign );
+			if ( is_wp_error( $regen ) ) {
+				AIEM_DB::update_campaign( $campaign_id, [ 'status' => $prev_status ] );
+				wp_send_json_error( [ 'message' => 'AI generation failed, nothing was sent: ' . $regen->get_error_message() ] );
 			}
 		}
 
-		AIEM_DB::update_campaign( $campaign_id, [ 'status' => 'sending' ] );
 		$count = AIEM_Sender::enqueue_sends( $campaign_id );
 
 		if ( $count === 0 ) {
-			AIEM_DB::update_campaign( $campaign_id, [ 'status' => 'draft' ] );
-			wp_send_json_error( [ 'message' => 'No subscribed recipients found on this list.' ] );
+			AIEM_DB::update_campaign( $campaign_id, [ 'status' => $prev_status ] );
+			$message = $prev_status === 'sent'
+				? 'This campaign was already sent to everyone on this list. Use Resend to send it again.'
+				: 'No subscribed recipients found on this list.';
+			wp_send_json_error( [ 'message' => $message ] );
 		}
 
 		// Process synchronously so sends go out immediately (no WP-Cron dependency).
@@ -565,8 +558,8 @@ class AIEM_Ajax {
 
 		$email        = sanitize_email( $_POST['email'] ?? '' );
 		$list_id      = (int) ( $_POST['list_id'] ?? 0 );
-		$first_name   = sanitize_text_field( $_POST['first_name'] ?? '' );
-		$last_name    = sanitize_text_field( $_POST['last_name'] ?? '' );
+		$first_name   = sanitize_text_field( wp_unslash( $_POST['first_name'] ?? '' ) );
+		$last_name    = sanitize_text_field( wp_unslash( $_POST['last_name'] ?? '' ) );
 		$double_optin = get_option( 'aiem_double_optin', '0' ) === '1';
 		$success_msg  = null;
 
@@ -603,8 +596,32 @@ class AIEM_Ajax {
 			if ( $existing->status === 'subscribed' ) {
 				wp_send_json_success( [ 'message' => "You're already subscribed!" ] );
 			}
+			if ( in_array( $existing->status, [ 'unsubscribed', 'bounced' ], true ) ) {
+				// Coming back after unsubscribing/bouncing. Always require an
+				// emailed confirmation (even with double opt-in off), so a third
+				// party cannot re-add someone who opted out.
+				$reactivated = AIEM_DB::reactivate_subscriber( (int) $existing->id, bin2hex( random_bytes( 32 ) ), [
+					'first_name' => $first_name,
+					'last_name'  => $last_name,
+					'ip_address' => $ip_raw,
+				] );
+				if ( ! $reactivated ) {
+					wp_send_json_error( [ 'message' => 'Could not subscribe. Please try again.' ] );
+				}
+				AIEM_Logs::log( AIEM_Logs::EVENT_SUBSCRIBE, [
+					'subscriber_id'   => (int) $existing->id,
+					'email'           => $email,
+					'list_id'         => $list_id,
+					'source'          => 'resubscribe',
+					'pending_confirm' => true,
+				] );
+				AIEM_Sender::send_confirmation_email( (int) $existing->id );
+				wp_send_json_success( [ 'message' => 'Please check your email to confirm your subscription.' ] );
+			}
 			if ( $existing->status === 'unconfirmed' ) {
-				if ( $double_optin ) {
+				// Returning subscribers (source "resubscribe") must confirm by
+				// email even when double opt-in is off.
+				if ( $double_optin || $existing->source === 'resubscribe' ) {
 					AIEM_Sender::send_confirmation_email( (int) $existing->id );
 					wp_send_json_success( [ 'message' => 'Please check your email to confirm your subscription.' ] );
 				} else {
@@ -899,8 +916,14 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'No audience selected.' ] );
 		}
 
+		// Claim before clearing: wiping send rows while a send is in progress
+		// would re-send to people who already received it.
+		if ( ! AIEM_DB::claim_campaign_for_send( $campaign_id ) ) {
+			wp_send_json_error( [ 'message' => 'This campaign is already sending.' ] );
+		}
+
 		AIEM_DB::clear_sends( $campaign_id );
-		AIEM_DB::update_campaign( $campaign_id, [ 'status' => 'sending', 'sent_at' => null ] );
+		AIEM_DB::update_campaign( $campaign_id, [ 'sent_at' => null ] );
 		$count = AIEM_Sender::enqueue_sends( $campaign_id );
 
 		if ( $count === 0 ) {

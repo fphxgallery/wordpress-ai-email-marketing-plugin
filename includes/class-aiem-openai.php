@@ -66,16 +66,70 @@ class AIEM_OpenAI {
 			}
 		}
 
-		$body = wp_json_encode( [
+		$payload = [
 			'model'    => $model,
 			'messages' => [
 				[ 'role' => 'system', 'content' => $system_prompt ],
 				[ 'role' => 'user',   'content' => $user_content ],
 			],
-			'max_tokens'  => $template_html ? max( 4000, (int) get_option( 'aiem_max_tokens', 2500 ) ) : (int) get_option( 'aiem_max_tokens', 2500 ),
-			'temperature' => 0.7,
-		] );
+			'max_tokens'      => $template_html ? max( 4000, (int) get_option( 'aiem_max_tokens', 2500 ) ) : (int) get_option( 'aiem_max_tokens', 2500 ),
+			'temperature'     => 0.7,
+			// JSON mode: the model must return one valid JSON object.
+			'response_format' => [ 'type' => 'json_object' ],
+		];
 
+		$result = self::request( $api_key, $payload );
+
+		// Older models reject response_format; retry once without it.
+		if ( is_wp_error( $result ) && stripos( $result->get_error_message(), 'response_format' ) !== false ) {
+			unset( $payload['response_format'] );
+			$result = self::request( $api_key, $payload );
+		}
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$choice = $result['choices'][0] ?? [];
+		$raw    = trim( (string) ( $choice['message']['content'] ?? '' ) );
+
+		// Output hit the token limit: the JSON/HTML is cut off mid-way. Never
+		// treat a truncated response as a finished email.
+		if ( ( $choice['finish_reason'] ?? '' ) === 'length' ) {
+			return new WP_Error( 'ai_truncated', 'AI output was cut off at the token limit. Increase "Max Output Tokens" in Settings and try again.' );
+		}
+		if ( $raw === '' ) {
+			return new WP_Error( 'ai_empty', 'AI returned an empty response.' );
+		}
+
+		// Strip ```json fences some models add despite instructions.
+		$clean  = preg_replace( '/^```[a-zA-Z]*\s*|\s*```$/', '', $raw );
+		$parsed = json_decode( $clean, true );
+
+		if ( is_array( $parsed ) && ! empty( $parsed['html'] ) && is_string( $parsed['html'] ) ) {
+			return [
+				'subject'      => (string) ( $parsed['subject']      ?? '' ),
+				'preview_text' => (string) ( $parsed['preview_text'] ?? '' ),
+				'html'         => $parsed['html'],
+			];
+		}
+
+		// Not JSON. Accept it as the body only if it is plainly HTML; anything
+		// else (broken JSON, an apology, etc.) must not be emailed to a list.
+		if ( $clean !== '' && $clean[0] === '<' ) {
+			return [
+				'subject'      => '',
+				'preview_text' => '',
+				'html'         => $clean,
+			];
+		}
+
+		return new WP_Error( 'ai_bad_format', 'AI response was not valid JSON or HTML. Try generating again.' );
+	}
+
+	/**
+	 * POST to the chat completions endpoint. Returns the decoded body or WP_Error.
+	 */
+	private static function request( string $api_key, array $payload ): array|WP_Error {
 		$response = wp_remote_post(
 			'https://api.openai.com/v1/chat/completions',
 			[
@@ -84,7 +138,7 @@ class AIEM_OpenAI {
 					'Authorization' => 'Bearer ' . $api_key,
 					'Content-Type'  => 'application/json',
 				],
-				'body' => $body,
+				'body' => wp_json_encode( $payload ),
 			]
 		);
 
@@ -95,27 +149,45 @@ class AIEM_OpenAI {
 		$code = wp_remote_retrieve_response_code( $response );
 		$data = json_decode( wp_remote_retrieve_body( $response ), true );
 
-		if ( $code !== 200 ) {
-			$msg = $data['error']['message'] ?? 'Unknown OpenAI error';
-			return new WP_Error( 'openai_error', $msg );
+		if ( $code !== 200 || ! is_array( $data ) ) {
+			return new WP_Error( 'openai_error', $data['error']['message'] ?? 'Unknown OpenAI error' );
 		}
 
-		$raw     = $data['choices'][0]['message']['content'] ?? '';
-		$parsed  = json_decode( $raw, true );
+		return $data;
+	}
 
-		if ( ! is_array( $parsed ) || empty( $parsed['html'] ) ) {
-			// Fallback: treat entire response as html body, leave subject/preview empty.
-			return [
-				'subject'      => '',
-				'preview_text' => '',
-				'html'         => $raw,
-			];
+	/**
+	 * Regenerate a recurring AI campaign's content from its saved prompt,
+	 * products and template, and store it. Returns true, or WP_Error when
+	 * generation failed (in which case the campaign content is left untouched
+	 * and the caller must NOT send).
+	 */
+	public static function regenerate_campaign( object $campaign ): bool|WP_Error {
+		$products = [];
+		if ( function_exists( 'wc_get_products' ) ) {
+			$cat_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_category_ids ?? '[]', true ) ?: [] ) );
+			$tag_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_tag_ids ?? '[]', true ) ?: [] ) );
+			$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
 		}
 
-		return [
-			'subject'      => $parsed['subject']      ?? '',
-			'preview_text' => $parsed['preview_text'] ?? '',
-			'html'         => $parsed['html']          ?? '',
-		];
+		$tpl_html = '';
+		if ( ! empty( $campaign->template_id ) ) {
+			$tpl = AIEM_DB::get_email_template( (int) $campaign->template_id );
+			if ( $tpl ) {
+				$tpl_html = (string) $tpl->html_content;
+			}
+		}
+
+		$result = self::generate( (string) $campaign->ai_prompt, $products, $tpl_html );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$update = [ 'html_content' => $result['html'] ];
+		if ( $result['subject'] )      { $update['subject']   = $result['subject']; }
+		if ( $result['preview_text'] ) { $update['preheader'] = $result['preview_text']; }
+		AIEM_DB::update_campaign( (int) $campaign->id, $update );
+
+		return true;
 	}
 }

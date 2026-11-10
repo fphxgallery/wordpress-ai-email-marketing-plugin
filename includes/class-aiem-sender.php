@@ -20,6 +20,15 @@ class AIEM_Sender {
 		$send_id   = self::$current_send_id;
 		$error_msg = $error->get_error_message();
 
+		// wp_mail_failed fires for ANY failure (bad SMTP password, connection
+		// timeout, rate limit...). Only a permanent rejection of the recipient
+		// address is a bounce. Everything else is kept as a plain failure so a
+		// mail-server outage can never suppress the subscriber list.
+		if ( ! self::is_hard_bounce( $error_msg ) ) {
+			AIEM_DB::update_send( $send_id, [ 'bounce_error' => $error_msg ] );
+			return;
+		}
+
 		AIEM_DB::mark_send_bounced( $send_id, $error_msg );
 
 		$send = AIEM_DB::get_send( $send_id );
@@ -40,6 +49,27 @@ class AIEM_Sender {
 			'error'         => $error_msg,
 			'bounce_count'  => $new_count,
 		] );
+	}
+
+	/**
+	 * True only when the mail server permanently rejected the recipient address.
+	 * Prefers the enhanced status code (5.1.x = bad address, 5.2.1 = mailbox
+	 * disabled); falls back to a 550-553 reply with "no such user" style text.
+	 */
+	public static function is_hard_bounce( string $error_msg ): bool {
+		if ( preg_match( '/\b5\.(\d)\.(\d{1,3})\b/', $error_msg, $m ) ) {
+			if ( $m[1] === '1' ) {
+				return in_array( $m[2], [ '1', '2', '3', '6', '10' ], true );
+			}
+			return $m[1] === '2' && $m[2] === '1';
+		}
+		if ( ! preg_match( '/\b55[0-3]\b/', $error_msg ) ) {
+			return false;
+		}
+		return (bool) preg_match(
+			'/user unknown|unknown user|no such (user|mailbox|recipient|address)|does not exist|mailbox (unavailable|not found)|invalid (recipient|mailbox|address)|recipient (rejected|not found)|address rejected/i',
+			$error_msg
+		);
 	}
 
 	public static function enqueue_sends( int $campaign_id ): int {
@@ -74,6 +104,10 @@ class AIEM_Sender {
 			] );
 			return false;
 		}
+		// A leftover scheduled batch for a campaign that is no longer sending.
+		if ( $campaign->status !== 'sending' ) {
+			return false;
+		}
 
 		$batch_size = max( 1, (int) get_option( 'aiem_batch_size', 50 ) );
 		$sends = AIEM_DB::get_pending_sends( $campaign_id, $batch_size );
@@ -84,15 +118,22 @@ class AIEM_Sender {
 			'pending'     => count( $sends ),
 		] );
 
+		// Stop well before PHP's time limit so the "schedule next batch" step
+		// below always gets to run. Unsent rows stay pending for the next batch.
+		$deadline = microtime( true ) + 20;
+
 		foreach ( $sends as $send ) {
+			if ( microtime( true ) > $deadline ) {
+				break;
+			}
+			// Atomic claim: if an overlapping batch already took this row, skip it.
+			if ( ! AIEM_DB::claim_send( (int) $send->id ) ) {
+				continue;
+			}
+
 			$subscriber  = (object) [ 'email' => $send->email, 'first_name' => $send->first_name, 'last_name' => $send->last_name ];
 			$html        = self::build_email( $campaign->html_content, $send->tracking_key, $subscriber, $campaign->preheader ?? '' );
-			$from_name   = $campaign->from_name ?: get_bloginfo( 'name' );
-			$from_email  = $campaign->from_email ?: get_option( 'admin_email' );
-			$headers     = [
-				'Content-Type: text/html; charset=UTF-8',
-				"From: {$from_name} <{$from_email}>",
-			];
+			$headers     = self::campaign_headers( $campaign, $send->tracking_key );
 
 			self::$current_send_id = (int) $send->id;
 			$sent = wp_mail( $send->email, $campaign->subject, $html, $headers );
@@ -100,6 +141,7 @@ class AIEM_Sender {
 
 			if ( $sent ) {
 				AIEM_DB::update_send( (int) $send->id, [ 'status' => 'sent', 'sent_at' => current_time( 'mysql' ) ] );
+				AIEM_DB::reset_bounce_count( (int) $send->subscriber_id );
 				AIEM_Logs::log( AIEM_Logs::EVENT_SEND, [
 					'subscriber_id' => $send->subscriber_id,
 					'campaign_id'   => $campaign_id,
@@ -117,6 +159,7 @@ class AIEM_Sender {
 						'campaign_id'   => $campaign_id,
 						'send_id'       => $send->id,
 						'email'         => $send->email,
+						'error'         => $fresh->bounce_error ?? '',
 					] );
 				}
 			}
@@ -132,11 +175,15 @@ class AIEM_Sender {
 				'action'      => 'next_batch_scheduled',
 				'delay'       => $delay,
 			] );
-		} else {
-			AIEM_DB::update_campaign( $campaign_id, [
-				'status'  => 'sent',
-				'sent_at' => current_time( 'mysql' ),
+		} elseif ( AIEM_DB::count_sends_in_progress( $campaign_id ) > 0 ) {
+			// Another batch is still mid-send. It (or the cron recovery sweep)
+			// will finish the campaign.
+			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
+				'campaign_id' => $campaign_id,
+				'action'      => 'waiting_on_other_batch',
 			] );
+		} elseif ( AIEM_DB::complete_campaign( $campaign_id ) ) {
+			// complete_campaign() is atomic, so these run exactly once.
 			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
 				'campaign_id' => $campaign_id,
 				'action'      => 'campaign_complete',
@@ -173,12 +220,7 @@ class AIEM_Sender {
 
 		$tracking_key = $send->tracking_key;
 		$html         = self::build_email( $campaign->html_content, $tracking_key, $subscriber, $campaign->preheader ?? '' );
-		$from_name    = $campaign->from_name ?: get_bloginfo( 'name' );
-		$from_email   = $campaign->from_email ?: get_option( 'admin_email' );
-		$headers      = [
-			'Content-Type: text/html; charset=UTF-8',
-			"From: {$from_name} <{$from_email}>",
-		];
+		$headers      = self::campaign_headers( $campaign, $tracking_key );
 
 		self::$current_send_id = (int) $send_id;
 		$sent = wp_mail( $subscriber->email, $campaign->subject, $html, $headers );
@@ -186,6 +228,7 @@ class AIEM_Sender {
 
 		if ( $sent ) {
 			AIEM_DB::update_send( (int) $send_id, [ 'status' => 'sent', 'sent_at' => current_time( 'mysql' ) ] );
+			AIEM_DB::reset_bounce_count( $subscriber_id );
 		} else {
 			$fresh = AIEM_DB::get_send( (int) $send_id );
 			if ( ! $fresh || $fresh->status !== 'bounced' ) {
@@ -196,39 +239,105 @@ class AIEM_Sender {
 		return $sent;
 	}
 
-	public static function build_email( string $html_content, string $tracking_key, object $subscriber, string $preheader = '' ): string {
-		$content = self::replace_merge_tags( $html_content, $subscriber );
-		$content = self::rewrite_links( $content, $tracking_key );
+	/**
+	 * Headers for a campaign email. Real sends (not test previews) get the
+	 * List-Unsubscribe pair that Gmail/Yahoo require from bulk senders.
+	 */
+	private static function campaign_headers( object $campaign, string $tracking_key = '' ): array {
+		$from_name  = $campaign->from_name ?: get_bloginfo( 'name' );
+		$from_email = $campaign->from_email ?: get_option( 'admin_email' );
+		$headers    = [
+			'Content-Type: text/html; charset=UTF-8',
+			"From: {$from_name} <{$from_email}>",
+		];
+		if ( $tracking_key && $tracking_key !== 'test_preview' ) {
+			$headers = array_merge( $headers, self::list_unsubscribe_headers( self::unsub_url_for_key( $tracking_key ) ) );
+		}
+		return $headers;
+	}
 
-		$unsub_url = add_query_arg( [
+	/** RFC 8058 one-click unsubscribe headers. */
+	public static function list_unsubscribe_headers( string $unsub_url ): array {
+		return [
+			'List-Unsubscribe: <' . esc_url_raw( $unsub_url ) . '>',
+			'List-Unsubscribe-Post: List-Unsubscribe=One-Click',
+		];
+	}
+
+	/** Unsubscribe URL tied to a campaign send (tracking key). */
+	public static function unsub_url_for_key( string $tracking_key ): string {
+		return add_query_arg( [
 			'aiem_unsub' => '1',
 			'k'          => $tracking_key,
 		], home_url( '/' ) );
+	}
 
-		$pixel_url      = add_query_arg( [ 'aiem_track' => 'open', 'k' => $tracking_key ], home_url( '/' ) );
-		$tracking_pixel = '<img src="' . esc_url( $pixel_url ) . '" width="1" height="1" style="display:block;border:0;" alt="" />';
+	public static function subscriber_unsub_token( int $subscriber_id ): string {
+		return substr( hash_hmac( 'sha256', 'aiem_unsub|' . $subscriber_id, wp_salt( 'auth' ) ), 0, 32 );
+	}
 
-		// Replace any placeholders present in the campaign HTML directly.
+	/** Unsubscribe URL for emails with no send row (workflow emails). */
+	public static function subscriber_unsub_url( int $subscriber_id ): string {
+		return add_query_arg( [
+			'aiem_unsub' => '1',
+			'sid'        => $subscriber_id,
+			'tok'        => self::subscriber_unsub_token( $subscriber_id ),
+		], home_url( '/' ) );
+	}
+
+	/** Signature proving a tracked click URL was generated by this site. */
+	public static function click_signature( string $tracking_key, string $url ): string {
+		return substr( hash_hmac( 'sha256', 'aiem_click|' . $tracking_key . '|' . $url, wp_salt( 'auth' ) ), 0, 32 );
+	}
+
+	/** Fallback footer used when the email HTML has no {{unsubscribe_url}}. */
+	public static function unsubscribe_footer( string $unsub_url ): string {
+		return '<div style="text-align:center;font-family:Arial,sans-serif;font-size:12px;line-height:18px;color:#888888;padding:20px 10px;">'
+			. '<a href="' . esc_url( $unsub_url ) . '" style="color:#888888;text-decoration:underline;">Unsubscribe</a>'
+			. '</div>';
+	}
+
+	/** Insert a snippet just before </body>, or append when there is none. */
+	public static function inject_at_end( string $html, string $snippet ): string {
+		$pos = strripos( $html, '</body>' );
+		if ( $pos === false ) {
+			return $html . $snippet;
+		}
+		return substr( $html, 0, $pos ) . $snippet . substr( $html, $pos );
+	}
+
+	public static function build_email( string $html_content, string $tracking_key, object $subscriber, string $preheader = '' ): string {
+		$unsub_url     = self::unsub_url_for_key( $tracking_key );
+		$has_unsub_tag = strpos( $html_content, '{{unsubscribe_url}}' ) !== false;
+
+		$content = self::replace_merge_tags( $html_content, $subscriber );
+
+		// Placeholders must be filled BEFORE links are rewritten. Otherwise
+		// href="{{unsubscribe_url}}" gets wrapped in a click-tracking redirect
+		// while still a raw placeholder, and the unsubscribe link is dead.
 		$content = str_replace(
 			[ '{{unsubscribe_url}}', '{{site_name}}', '{{site_url}}', '{{preheader}}' ],
 			[ esc_url( $unsub_url ), get_bloginfo( 'name' ), home_url(), esc_html( $preheader ) ],
 			$content
 		);
 
-		// Inject preheader hidden div and tracking pixel if the HTML has a body tag;
-		// otherwise append to end.
+		$content = self::rewrite_links( $content, $tracking_key );
+
+		// Inject preheader hidden div if the HTML has a body tag.
 		if ( $preheader && stripos( $content, '<body' ) !== false ) {
 			$preheader_div = '<div style="display:none;font-size:1px;color:transparent;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">' . esc_html( $preheader ) . '</div>';
 			$content = preg_replace( '/(<body[^>]*>)/i', '$1' . $preheader_div, $content, 1 );
 		}
 
-		if ( stripos( $content, '</body>' ) !== false ) {
-			$content = str_ireplace( '</body>', $tracking_pixel . '</body>', $content );
-		} else {
-			$content .= $tracking_pixel;
+		// Every marketing email must carry an unsubscribe link.
+		if ( ! $has_unsub_tag ) {
+			$content = self::inject_at_end( $content, self::unsubscribe_footer( $unsub_url ) );
 		}
 
-		return $content;
+		$pixel_url      = add_query_arg( [ 'aiem_track' => 'open', 'k' => $tracking_key ], home_url( '/' ) );
+		$tracking_pixel = '<img src="' . esc_url( $pixel_url ) . '" width="1" height="1" style="display:block;border:0;" alt="" />';
+
+		return self::inject_at_end( $content, $tracking_pixel );
 	}
 
 	private static function replace_merge_tags( string $html, object $subscriber ): string {
@@ -247,19 +356,23 @@ class AIEM_Sender {
 		return preg_replace_callback(
 			'/<a\s([^>]*?)href=["\']([^"\']+)["\']([^>]*?)>/i',
 			function ( $matches ) use ( $tracking_key ) {
-				$href = $matches[2];
+				// The attribute is HTML-encoded (&amp;); decode to the real URL.
+				$href = html_entity_decode( $matches[2], ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 
-				if ( strpos( $href, 'mailto:' ) === 0 ) {
+				// Only track real web links: skip mailto:, tel:, #anchors, etc.
+				if ( ! preg_match( '#^https?://#i', $href ) ) {
 					return $matches[0];
 				}
 				if ( strpos( $href, 'aiem_unsub' ) !== false ) {
 					return $matches[0];
 				}
 
+				// URL-safe base64 (no + / =) so the value survives the query string.
 				$tracked = add_query_arg( [
 					'aiem_track' => 'click',
 					'k'          => $tracking_key,
-					'url'        => base64_encode( $href ),
+					'url'        => rtrim( strtr( base64_encode( $href ), '+/', '-_' ), '=' ),
+					'sig'        => self::click_signature( $tracking_key, $href ),
 				], home_url( '/' ) );
 
 				return '<a ' . $matches[1] . 'href="' . esc_url( $tracked ) . '"' . $matches[3] . '>';

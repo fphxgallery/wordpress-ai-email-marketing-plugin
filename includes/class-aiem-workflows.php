@@ -154,7 +154,10 @@ class AIEM_Workflows {
 		$items = AIEM_DB::get_due_workflow_queue( 20 );
 
 		foreach ( $items as $item ) {
-			AIEM_DB::update_workflow_queue_item( (int) $item->id, [ 'status' => 'processing' ] );
+			// Atomic claim: skip items another request is already processing.
+			if ( ! AIEM_DB::claim_workflow_queue_item( (int) $item->id ) ) {
+				continue;
+			}
 
 			$wf = AIEM_DB::get_workflow( (int) $item->workflow_id );
 			if ( ! $wf || $wf->status !== 'active' ) {
@@ -169,7 +172,10 @@ class AIEM_Workflows {
 				$subscriber = AIEM_DB::get_subscriber( (int) $item->subscriber_id );
 				$sent       = false;
 
-				if ( $subscriber && $subscriber->status === 'subscribed' ) {
+				// The "is this person still subscribed?" check lives in
+				// send_inline_email(), because it only applies when the email
+				// goes to the subscriber (not e.g. an admin notification).
+				if ( $subscriber ) {
 					$post    = ( (int) $item->post_id ) ? get_post( (int) $item->post_id ) : null;
 					$context = json_decode( $item->context ?? '{}', true ) ?: [];
 					$sent    = self::send_inline_email( $wf, $subscriber, $post instanceof WP_Post ? $post : null, $context );
@@ -210,13 +216,22 @@ class AIEM_Workflows {
 			return false;
 		}
 
+		// Is this email going to the subscriber, or to someone else (e.g. an
+		// admin notification address typed into "Send To")?
+		$to_subscriber = strcasecmp( trim( $send_to ), (string) ( $subscriber->email ?? '' ) ) === 0;
+
+		// Never email a subscriber who has unsubscribed, bounced or not confirmed.
+		if ( $to_subscriber && ( $subscriber->status ?? '' ) !== 'subscribed' ) {
+			return false;
+		}
+
 		if ( ( $wf->action_email_styling ?? 'none' ) === 'default' ) {
 			$template_file = AIEM_PLUGIN_DIR . 'templates/default-email.html';
 			if ( file_exists( $template_file ) ) {
 				$template = file_get_contents( $template_file );
 				$content  = str_replace(
-					[ '{{content}}', '{{unsubscribe_url}}', '{{site_name}}', '{{site_url}}' ],
-					[ $content, home_url( '/' ), get_bloginfo( 'name' ), home_url() ],
+					[ '{{content}}', '{{site_name}}', '{{site_url}}' ],
+					[ $content, get_bloginfo( 'name' ), home_url() ],
 					$template
 				);
 			}
@@ -224,11 +239,27 @@ class AIEM_Workflows {
 
 		$from_name  = get_option( 'aiem_from_name', get_bloginfo( 'name' ) ) ?: get_bloginfo( 'name' );
 		$from_email = get_option( 'aiem_from_email', get_option( 'admin_email' ) ) ?: get_option( 'admin_email' );
-
-		return (bool) wp_mail( $send_to, $subject, $content, [
+		$headers    = [
 			'Content-Type: text/html; charset=UTF-8',
 			"From: {$from_name} <{$from_email}>",
-		] );
+		];
+
+		if ( $to_subscriber ) {
+			// Subscriber-facing email: give it a working unsubscribe link
+			// (filling the placeholder, or appending a footer) plus the
+			// one-click List-Unsubscribe headers.
+			$unsub_url = AIEM_Sender::subscriber_unsub_url( (int) $subscriber->id );
+			if ( strpos( $content, '{{unsubscribe_url}}' ) !== false ) {
+				$content = str_replace( '{{unsubscribe_url}}', esc_url( $unsub_url ), $content );
+			} else {
+				$content = AIEM_Sender::inject_at_end( $content, AIEM_Sender::unsubscribe_footer( $unsub_url ) );
+			}
+			$headers = array_merge( $headers, AIEM_Sender::list_unsubscribe_headers( $unsub_url ) );
+		} else {
+			$content = str_replace( '{{unsubscribe_url}}', esc_url( home_url( '/' ) ), $content );
+		}
+
+		return (bool) wp_mail( $send_to, $subject, $content, $headers );
 	}
 
 	private static function replace_subscriber_tags( string $text, object $subscriber ): string {

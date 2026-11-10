@@ -197,6 +197,17 @@ class AIEM_DB {
 				$pdo->exec( "ALTER TABLE `{$table}` ADD COLUMN `{$col}` {$def}" );
 			}
 		}
+
+		// dbDelta does not reliably add columns on SQLite, so columns introduced
+		// after the first install are added here.
+		$campaigns = $wpdb->prefix . 'aiem_campaigns';
+		$cols      = array_column(
+			$pdo->query( "PRAGMA table_info(`{$campaigns}`)" )->fetchAll( \PDO::FETCH_ASSOC ),
+			'name'
+		);
+		if ( $cols && ! in_array( 'template_id', $cols, true ) ) {
+			$pdo->exec( "ALTER TABLE `{$campaigns}` ADD COLUMN `template_id` INTEGER NOT NULL DEFAULT 0" );
+		}
 	}
 
 	// ── Lists ──────────────────────────────────────────────────────────────
@@ -399,6 +410,60 @@ class AIEM_DB {
 		);
 	}
 
+	/**
+	 * Unsubscribe by subscriber ID. Returns true only when the status actually
+	 * changed, so callers can avoid logging/firing triggers twice.
+	 */
+	public static function unsubscribe_subscriber( int $id ): bool {
+		global $wpdb;
+		return (bool) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_subscribers
+				 SET status = 'unsubscribed', unsubscribed_at = %s
+				 WHERE id = %d AND status <> 'unsubscribed'",
+				current_time( 'mysql' ), $id
+			)
+		);
+	}
+
+	/**
+	 * Put a previously unsubscribed/bounced subscriber back into the
+	 * confirmation flow. They only become 'subscribed' again after clicking
+	 * the emailed confirmation link, so nobody can be re-added by a third party.
+	 */
+	public static function reactivate_subscriber( int $id, string $confirm_key, array $data = [] ): bool {
+		global $wpdb;
+		$update = [
+			'status'          => 'unconfirmed',
+			'confirm_key'     => $confirm_key,
+			'source'          => 'resubscribe',
+			'bounce_count'    => 0,
+			'unsubscribed_at' => null,
+		];
+		foreach ( [ 'first_name', 'last_name' ] as $field ) {
+			if ( ( $data[ $field ] ?? '' ) !== '' ) {
+				$update[ $field ] = sanitize_text_field( $data[ $field ] );
+			}
+		}
+		if ( ( $data['ip_address'] ?? '' ) !== '' ) {
+			$update['ip_address'] = $data['ip_address'];
+		}
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			return self::pdo_update( $wpdb->prefix . 'aiem_subscribers', $update, [ 'id' => $id ] );
+		}
+		return false !== $wpdb->update( "{$wpdb->prefix}aiem_subscribers", $update, [ 'id' => $id ] );
+	}
+
+	public static function reset_bounce_count( int $subscriber_id ): void {
+		global $wpdb;
+		$wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_subscribers SET bounce_count = 0 WHERE id = %d AND bounce_count > 0",
+				$subscriber_id
+			)
+		);
+	}
+
 	public static function delete_subscriber( int $id ): bool {
 		global $wpdb;
 		return (bool) $wpdb->delete( "{$wpdb->prefix}aiem_subscribers", [ 'id' => $id ], [ '%d' ] );
@@ -451,6 +516,48 @@ class AIEM_DB {
 				current_time( 'mysql' )
 			)
 		) ?: [];
+	}
+
+	public static function get_sending_campaigns(): array {
+		global $wpdb;
+		return $wpdb->get_results(
+			"SELECT * FROM {$wpdb->prefix}aiem_campaigns WHERE status = 'sending'"
+		) ?: [];
+	}
+
+	/**
+	 * Atomically move a campaign into 'sending'. Returns false when another
+	 * request already holds it, which is what stops double sends.
+	 * Pass $from_status to require a specific starting status (e.g. 'scheduled').
+	 */
+	public static function claim_campaign_for_send( int $id, string $from_status = '' ): bool {
+		global $wpdb;
+		if ( $from_status ) {
+			$sql = $wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_campaigns SET status = 'sending' WHERE id = %d AND status = %s",
+				$id, $from_status
+			);
+		} else {
+			$sql = $wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_campaigns SET status = 'sending' WHERE id = %d AND status <> 'sending'",
+				$id
+			);
+		}
+		return (bool) $wpdb->query( $sql );
+	}
+
+	/**
+	 * Atomically mark a sending campaign as sent. Returns true only for the
+	 * one caller that made the change, so completion hooks run exactly once.
+	 */
+	public static function complete_campaign( int $id ): bool {
+		global $wpdb;
+		return (bool) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_campaigns SET status = 'sent', sent_at = %s WHERE id = %d AND status = 'sending'",
+				current_time( 'mysql' ), $id
+			)
+		);
 	}
 
 	public static function create_campaign( array $data ): int|false {
@@ -599,6 +706,48 @@ class AIEM_DB {
 				$campaign_id, $limit
 			)
 		) ?: [];
+	}
+
+	/**
+	 * Atomically claim one pending send. sent_at doubles as the claim time
+	 * until the send finishes, so stale claims can be detected.
+	 */
+	public static function claim_send( int $id ): bool {
+		global $wpdb;
+		return (bool) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_sends SET status = 'sending', sent_at = %s WHERE id = %d AND status = 'pending'",
+				current_time( 'mysql' ), $id
+			)
+		);
+	}
+
+	public static function count_sends_in_progress( int $campaign_id ): int {
+		global $wpdb;
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$wpdb->prefix}aiem_sends WHERE campaign_id = %d AND status = 'sending'",
+				$campaign_id
+			)
+		);
+	}
+
+	/**
+	 * Sends claimed more than $minutes ago were interrupted mid-send (timeout
+	 * or crash). Mark them failed rather than retrying: the email may already
+	 * have gone out, and a retry could deliver it twice.
+	 */
+	public static function fail_stale_sends( int $minutes = 15 ): int {
+		global $wpdb;
+		$cutoff = wp_date( 'Y-m-d H:i:s', time() - $minutes * MINUTE_IN_SECONDS );
+		return (int) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_sends
+				 SET status = 'failed', bounce_error = %s
+				 WHERE status = 'sending' AND sent_at < %s",
+				'Interrupted mid-send (timeout or crash).', $cutoff
+			)
+		);
 	}
 
 	public static function update_send( int $id, array $data ): bool {
@@ -1229,6 +1378,37 @@ class AIEM_DB {
 				gmdate( 'Y-m-d H:i:s' ), $limit
 			)
 		) ?: [];
+	}
+
+	/**
+	 * Atomically claim one pending queue item. processed_at doubles as the
+	 * claim time until the item finishes.
+	 */
+	public static function claim_workflow_queue_item( int $id ): bool {
+		global $wpdb;
+		return (bool) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_workflow_queue SET status = 'processing', processed_at = %s WHERE id = %d AND status = 'pending'",
+				current_time( 'mysql' ), $id
+			)
+		);
+	}
+
+	/**
+	 * Queue items stuck in 'processing' were interrupted. Mark them failed
+	 * rather than retrying, for the same reason as fail_stale_sends().
+	 */
+	public static function fail_stale_workflow_queue( int $minutes = 15 ): int {
+		global $wpdb;
+		$cutoff = wp_date( 'Y-m-d H:i:s', time() - $minutes * MINUTE_IN_SECONDS );
+		return (int) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_workflow_queue
+				 SET status = 'failed'
+				 WHERE status = 'processing' AND ( processed_at IS NULL OR processed_at < %s )",
+				$cutoff
+			)
+		);
 	}
 
 	public static function update_workflow_queue_item( int $id, array $data ): bool {

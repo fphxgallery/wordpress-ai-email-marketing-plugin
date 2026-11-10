@@ -40,7 +40,39 @@ class AIEM_Cron {
 		AIEM_Sender::process_batch( $campaign_id );
 	}
 
+	/**
+	 * Recover work that was interrupted by a PHP timeout or crash, so nothing
+	 * stays stuck in 'sending' / 'processing' forever.
+	 */
+	private function recover_stuck(): void {
+		$failed_sends = AIEM_DB::fail_stale_sends( 15 );
+		$failed_queue = AIEM_DB::fail_stale_workflow_queue( 15 );
+
+		// A sending campaign must always have a next batch queued. If its
+		// batch chain broke, restart it; process_batch() picks up whatever is
+		// still pending, or marks the campaign complete.
+		$restarted = [];
+		foreach ( AIEM_DB::get_sending_campaigns() as $campaign ) {
+			$id = (int) $campaign->id;
+			if ( ! wp_next_scheduled( 'aiem_process_batch', [ $id ] ) ) {
+				wp_schedule_single_event( time(), 'aiem_process_batch', [ $id ] );
+				$restarted[] = $id;
+			}
+		}
+
+		if ( $failed_sends || $failed_queue || $restarted ) {
+			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_CHECK, [
+				'action'              => 'recovered_stuck',
+				'failed_sends'        => $failed_sends,
+				'failed_queue_items'  => $failed_queue,
+				'restarted_campaigns' => $restarted,
+			] );
+		}
+	}
+
 	public function check_scheduled(): void {
+		$this->recover_stuck();
+
 		$campaigns = AIEM_DB::get_scheduled_due();
 
 		AIEM_Logs::log( AIEM_Logs::EVENT_CRON_CHECK, [
@@ -52,36 +84,28 @@ class AIEM_Cron {
 		foreach ( $campaigns as $campaign ) {
 			$id = (int) $campaign->id;
 
+			// Atomic claim, taken BEFORE the slow AI call, so an overlapping
+			// cron run cannot pick up and send the same campaign.
+			if ( ! AIEM_DB::claim_campaign_for_send( $id, 'scheduled' ) ) {
+				continue;
+			}
+
 			if ( $campaign->recur_schedule && $campaign->ai_prompt ) {
-				$products = [];
-				if ( function_exists( 'wc_get_products' ) ) {
-					$cat_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_category_ids ?? '[]', true ) ?: [] ) );
-					$tag_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_tag_ids ?? '[]', true ) ?: [] ) );
-					$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
-				}
+				$regen = AIEM_OpenAI::regenerate_campaign( $campaign );
 
-				$tpl_html = '';
-				if ( ! empty( $campaign->template_id ) ) {
-					$tpl = AIEM_DB::get_email_template( (int) $campaign->template_id );
-					if ( $tpl ) { $tpl_html = $tpl->html_content; }
-				}
-				$result = AIEM_OpenAI::generate( $campaign->ai_prompt, $products, $tpl_html );
-
-				if ( ! is_wp_error( $result ) ) {
-					$update = [ 'html_content' => $result['html'] ];
-					if ( $result['subject'] )      { $update['subject']   = $result['subject']; }
-					if ( $result['preview_text'] ) { $update['preheader'] = $result['preview_text']; }
-					AIEM_DB::update_campaign( $id, $update );
-				} else {
+				if ( is_wp_error( $regen ) ) {
+					// Do not send stale or broken content. Skip this occurrence
+					// and move the campaign to its next scheduled date.
 					AIEM_Logs::log( AIEM_Logs::EVENT_CRON_CHECK, [
 						'campaign_id' => $id,
-						'action'      => 'ai_generate_failed',
-						'error'       => $result->get_error_message(),
+						'action'      => 'ai_generate_failed_send_skipped',
+						'error'       => $regen->get_error_message(),
 					] );
+					AIEM_DB::schedule_next_recurrence( $id );
+					continue;
 				}
 			}
 
-			AIEM_DB::update_campaign( $id, [ 'status' => 'sending' ] );
 			$enqueued = AIEM_Sender::enqueue_sends( $id );
 			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_CHECK, [
 				'campaign_id' => $id,
