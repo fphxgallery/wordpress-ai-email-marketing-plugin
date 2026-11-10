@@ -62,6 +62,10 @@ class AIEM_Admin {
 			'defaultTemplatePrompt' => AIEM_OpenAI::default_template_prompt(),
 		] );
 
+		if ( strpos( $hook, 'aiem-dashboard' ) !== false ) {
+			wp_enqueue_script( 'aiem-dashboard', AIEM_PLUGIN_URL . 'assets/js/aiem-dashboard.js', [], AIEM_VERSION, true );
+		}
+
 		// Email template gallery + three-pane editor.
 		if ( strpos( $hook, 'aiem-email-editor' ) !== false || strpos( $hook, 'aiem-email-template-edit' ) !== false ) {
 			wp_enqueue_style( 'aiem-email-editor', AIEM_PLUGIN_URL . 'assets/css/aiem-email-editor.css', [ 'aiem-admin' ], AIEM_VERSION );
@@ -75,105 +79,263 @@ class AIEM_Admin {
 	// ── Pages ──────────────────────────────────────────────────────────────
 
 	public function page_dashboard(): void {
-		$stats   = AIEM_DB::get_dashboard_stats();
-		$growth  = AIEM_DB::get_subscriber_growth( 30 );
-		$top     = AIEM_DB::get_top_campaigns( 5 );
-		$recent  = AIEM_DB::get_recent_logs( 10 );
-
-		// Build growth data: fill in gaps for last 30 days
-		$growth_by_day = [];
-		foreach ( $growth as $row ) {
-			$growth_by_day[ $row->day ] = (int) $row->count;
+		$ranges = [ 7 => 'Last 7 days', 30 => 'Last 30 days', 90 => 'Last 90 days' ];
+		$days   = (int) ( $_GET['range'] ?? 7 );
+		if ( ! isset( $ranges[ $days ] ) ) {
+			$days = 7;
 		}
-		$growth_labels = [];
-		$growth_values = [];
-		for ( $i = 29; $i >= 0; $i-- ) {
-			$day             = date( 'Y-m-d', strtotime( "-{$i} days" ) );
-			$growth_labels[] = date( 'M j', strtotime( $day ) );
-			$growth_values[] = $growth_by_day[ $day ] ?? 0;
-		}
-		$max_growth = max( array_merge( $growth_values, [ 1 ] ) );
+		$period = strtolower( $ranges[ $days ] );
 
-		$stat_cards = [
-			[ 'label' => 'Active Subscribers', 'value' => number_format( $stats->subscribers ),  'icon' => 'groups', 'color' => 'purple' ],
-			[ 'label' => 'Campaigns Sent',     'value' => number_format( $stats->campaigns_sent ),'icon' => 'email-alt', 'color' => 'blue' ],
-			[ 'label' => 'Total Emails Sent',  'value' => number_format( $stats->total_sent ),   'icon' => 'email', 'color' => 'teal' ],
-			[ 'label' => 'Avg Open Rate',       'value' => $stats->open_rate . '%',               'icon' => 'visibility', 'color' => 'green' ],
-			[ 'label' => 'Total Clicks',        'value' => number_format( $stats->total_clicked ),'icon' => 'admin-links', 'color' => 'orange' ],
-			[ 'label' => 'Active Workflows',    'value' => number_format( $stats->active_workflows ),'icon' => 'update', 'color' => 'pink' ],
+		$data   = AIEM_DB::get_dashboard_data( $days );
+		$lists  = AIEM_DB::get_lists();
+		$top    = AIEM_DB::get_top_campaigns( 5 );
+		$recent = AIEM_DB::get_recent_logs( 8 );
+		$cur    = $data['current'];
+		$old    = $data['previous'];
+
+		$rate = static fn( int $part, int $whole ): float => $whole > 0 ? round( $part / $whole * 100, 1 ) : 0.0;
+
+		// Series identity: one fixed color per measure, shared by the KPI cards,
+		// the legend and the chart. Palette validated for color-blind separation.
+		$colors = [ 'send' => '#2a78d6', 'open' => '#eb6834', 'click' => '#1baf7a', 'new' => '#eda100', 'unsubscribe' => '#e87ba4' ];
+		$labels = [ 'send' => 'Sent', 'open' => 'Opens', 'click' => 'Clicks', 'new' => 'New subscribers', 'unsubscribe' => 'Unsubscribes' ];
+
+		// Change vs the previous period. Counts: percent change. Rates: points.
+		$change = static function ( float $now, float $before, bool $is_rate ) {
+			if ( $is_rate ) {
+				return [ round( $now - $before, 1 ), 'pts' ];
+			}
+			if ( $before <= 0 ) {
+				return $now > 0 ? [ null, 'new' ] : [ 0.0, '%' ];
+			}
+			return [ round( ( $now - $before ) / $before * 100, 1 ), '%' ];
+		};
+
+		$open_rate  = $rate( $cur['open_u'], $cur['send'] );
+		$click_rate = $rate( $cur['click_u'], $cur['send'] );
+		$kpis = [
+			[ 'key' => 'send',        'label' => 'Emails sent',     'value' => number_format( $cur['send'] ),        'change' => $change( $cur['send'], $old['send'], false ),               'up_is_good' => true,  'tip' => 'Emails delivered to your mail server in this period.' ],
+			[ 'key' => 'open',        'label' => 'Open rate',       'value' => $open_rate . '%',                     'change' => $change( $open_rate, $rate( $old['open_u'], $old['send'] ), true ),  'up_is_good' => true,  'tip' => 'Emails opened at least once, as a share of emails sent.' ],
+			[ 'key' => 'click',       'label' => 'Click rate',      'value' => $click_rate . '%',                    'change' => $change( $click_rate, $rate( $old['click_u'], $old['send'] ), true ), 'up_is_good' => true,  'tip' => 'Emails with at least one link click, as a share of emails sent.' ],
+			[ 'key' => 'new',         'label' => 'New subscribers', 'value' => number_format( $cur['new'] ),         'change' => $change( $cur['new'], $old['new'], false ),                 'up_is_good' => true,  'tip' => 'People who subscribed or confirmed in this period.' ],
+			[ 'key' => 'unsubscribe', 'label' => 'Unsubscribes',    'value' => number_format( $cur['unsubscribe'] ), 'change' => $change( $cur['unsubscribe'], $old['unsubscribe'], false ), 'up_is_good' => false, 'tip' => 'People who unsubscribed in this period.' ],
 		];
-		?>
-		<div class="wrap aiem-wrap">
-			<h1>Dashboard</h1>
 
-			<div class="aiem-stat-grid">
-				<?php foreach ( $stat_cards as $card ) : ?>
-				<div class="aiem-stat-card aiem-stat-card--<?php echo esc_attr( $card['color'] ); ?>">
-					<div class="aiem-stat-icon"><span class="dashicons dashicons-<?php echo esc_attr( $card['icon'] ); ?>" aria-hidden="true"></span></div>
-					<div class="aiem-stat-value"><?php echo esc_html( $card['value'] ); ?></div>
-					<div class="aiem-stat-label"><?php echo esc_html( $card['label'] ); ?></div>
-				</div>
+		$chart = [
+			'dates'  => $data['dates'],
+			'series' => [],
+		];
+		foreach ( $labels as $key => $label ) {
+			$chart['series'][] = [ 'key' => $key, 'label' => $label, 'color' => $colors[ $key ], 'values' => $data['series'][ $key ] ];
+		}
+		$has_activity = array_sum( array_map( 'array_sum', $data['series'] ) ) > 0;
+
+		// Audience breakdowns.
+		$active        = (int) ( $data['by_status']['subscribed'] ?? 0 );
+		$source_names  = [ 'form' => 'Signup form', 'import' => 'CSV import', 'manual' => 'Added manually', 'resubscribe' => 'Re-subscribed' ];
+		$sources       = [];
+		foreach ( $data['by_source'] as $src => $n ) {
+			$sources[ $source_names[ $src ] ?? ucfirst( $src ) ] = $n;
+		}
+		$list_counts = [];
+		foreach ( $lists as $l ) {
+			$list_counts[ $l->name ] = (int) $l->subscriber_count;
+		}
+		arsort( $list_counts );
+		$top_list = $list_counts ? array_key_first( $list_counts ) : '—';
+
+		// Status colors are reserved for state; each also carries a text label.
+		$status_meta = [
+			'subscribed'   => [ 'Subscribed',   '#0ca30c' ],
+			'unconfirmed'  => [ 'Unconfirmed',  '#fab219' ],
+			'unsubscribed' => [ 'Unsubscribed', '#ec835a' ],
+			'bounced'      => [ 'Bounced',      '#d03b3b' ],
+		];
+		$status_total = array_sum( $data['by_status'] );
+		$before_new   = max( 0, $active - $cur['new'] );
+		$growth       = $before_new > 0 ? round( $cur['new'] / $before_new * 100, 1 ) : null;
+
+		$bars = function ( array $rows, string $empty ): void {
+			if ( ! $rows || max( $rows ) <= 0 ) {
+				echo '<p class="aiem-dash-empty">' . esc_html( $empty ) . '</p>';
+				return;
+			}
+			$max = max( $rows );
+			echo '<div class="aiem-hbars">';
+			foreach ( array_slice( $rows, 0, 6, true ) as $name => $n ) {
+				$pct = $max > 0 ? max( 1, round( $n / $max * 100 ) ) : 0;
+				printf(
+					'<div class="aiem-hbar" tabindex="0" data-tip="%1$s" data-tip-value="%2$s"><span class="aiem-hbar-name" title="%1$s">%3$s</span><span class="aiem-hbar-track"><span class="aiem-hbar-fill" style="width:%4$d%%"></span></span><span class="aiem-hbar-val">%2$s</span></div>',
+					esc_attr( $name ),
+					esc_attr( number_format( $n ) ),
+					esc_html( $name ),
+					(int) $pct
+				);
+			}
+			echo '</div>';
+		};
+		?>
+		<div class="wrap aiem-wrap aiem-dash">
+			<h1>
+				Dashboard
+				<span class="aiem-range" role="group" aria-label="Date range">
+					<?php foreach ( $ranges as $n => $range_label ) : ?>
+						<a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-dashboard&range=' . $n ) ); ?>"
+						   class="<?php echo $n === $days ? 'is-on' : ''; ?>"<?php echo $n === $days ? ' aria-current="true"' : ''; ?>><?php echo esc_html( $range_label ); ?></a>
+					<?php endforeach; ?>
+				</span>
+			</h1>
+
+			<div class="aiem-kpis">
+				<?php foreach ( $kpis as $kpi ) :
+					[ $delta, $unit ] = $kpi['change'];
+					$dir   = $delta === null ? 'up' : ( $delta > 0 ? 'up' : ( $delta < 0 ? 'down' : 'flat' ) );
+					$good  = $dir === 'flat' ? 'flat' : ( ( $dir === 'up' ) === $kpi['up_is_good'] ? 'good' : 'bad' );
+					$text  = $delta === null ? 'New' : ( ( $delta > 0 ? '+' : '' ) . $delta . ( $unit === 'pts' ? ' pts' : '%' ) );
+					$title = $delta === null ? 'Nothing in the previous period to compare with' : 'Change vs the previous ' . $days . ' days';
+					?>
+					<div class="aiem-kpi">
+						<div class="aiem-kpi-top">
+							<span class="aiem-kpi-label"><?php echo esc_html( $kpi['label'] ); ?> <span class="dashicons dashicons-info-outline" title="<?php echo esc_attr( $kpi['tip'] ); ?>"></span></span>
+							<span class="aiem-kpi-period"><?php echo esc_html( ucfirst( $period ) ); ?></span>
+						</div>
+						<span class="aiem-kpi-key" style="background:<?php echo esc_attr( $colors[ $kpi['key'] ] ); ?>"></span>
+						<div class="aiem-kpi-bottom">
+							<span class="aiem-kpi-value"><?php echo esc_html( $kpi['value'] ); ?></span>
+							<span class="aiem-trend is-<?php echo esc_attr( $good ); ?>" title="<?php echo esc_attr( $title ); ?>">
+								<span class="dashicons dashicons-arrow-<?php echo $dir === 'down' ? 'down' : ( $dir === 'flat' ? 'right' : 'up' ); ?>-alt" aria-hidden="true"></span><?php echo esc_html( $text ); ?>
+							</span>
+						</div>
+					</div>
 				<?php endforeach; ?>
 			</div>
 
-			<div class="aiem-dashboard-grid">
-				<div class="aiem-panel aiem-panel--grow">
-					<h3>Subscriber Growth — Last 30 Days</h3>
-					<div class="aiem-bar-chart">
-						<?php foreach ( array_slice( $growth_values, -14 ) as $i => $val ) :
-							$pct   = $max_growth > 0 ? round( $val / $max_growth * 100 ) : 0;
-							$label = $growth_labels[ count( $growth_values ) - 14 + $i ];
-						?>
-						<div class="aiem-bar-col">
-							<div class="aiem-bar-tip"><?php echo $val; ?></div>
-							<div class="aiem-bar" style="height:<?php echo $pct; ?>%"></div>
-							<div class="aiem-bar-label"><?php echo esc_html( $label ); ?></div>
-						</div>
+			<div class="aiem-panel aiem-chart-card">
+				<div class="aiem-chart-head">
+					<h3>Overall statistics</h3>
+					<div class="aiem-legend" id="aiem-chart-legend" aria-label="Show or hide series"></div>
+				</div>
+				<div class="aiem-chart" id="aiem-chart" role="img" aria-label="<?php echo esc_attr( 'Daily sent, opens, clicks, new subscribers and unsubscribes, ' . $period ); ?>"></div>
+				<?php if ( ! $has_activity ) : ?>
+					<p class="aiem-dash-empty">No activity in the <?php echo esc_html( $period ); ?> yet. Send a campaign to see it here.</p>
+				<?php endif; ?>
+				<details class="aiem-chart-table">
+					<summary>View as table</summary>
+					<table class="aiem-panel-table">
+						<thead><tr><th>Day</th><?php foreach ( $labels as $label ) : ?><th><?php echo esc_html( $label ); ?></th><?php endforeach; ?></tr></thead>
+						<tbody>
+						<?php foreach ( array_reverse( array_keys( $data['dates'] ) ) as $i ) : ?>
+							<tr>
+								<td><?php echo esc_html( date_i18n( 'M j', strtotime( $data['dates'][ $i ] ) ) ); ?></td>
+								<?php foreach ( array_keys( $labels ) as $key ) : ?><td><?php echo number_format( $data['series'][ $key ][ $i ] ); ?></td><?php endforeach; ?>
+							</tr>
 						<?php endforeach; ?>
-					</div>
+						</tbody>
+					</table>
+				</details>
+				<script type="application/json" id="aiem-chart-data"><?php echo wp_json_encode( $chart, JSON_HEX_TAG | JSON_HEX_AMP ); ?></script>
+			</div>
+
+			<div class="aiem-dash-row">
+				<div class="aiem-panel">
+					<div class="aiem-card-head"><h3>Subscribers by source</h3><span>Active now</span></div>
+					<?php $bars( $sources, 'No active subscribers yet.' ); ?>
 				</div>
 
 				<div class="aiem-panel">
-					<h3>Top Campaigns by Open Rate</h3>
-					<?php if ( empty( $top ) ) : ?>
-						<p style="color:#9ca3af;">No sent campaigns yet.</p>
+					<div class="aiem-card-head"><h3>Subscribers by list</h3><span>Active now</span></div>
+					<?php $bars( $list_counts, 'No lists yet.' ); ?>
+				</div>
+
+				<div class="aiem-panel">
+					<div class="aiem-card-head"><h3>Audience</h3><span><?php echo esc_html( ucfirst( $period ) ); ?></span></div>
+					<div class="aiem-donut-wrap">
+						<div class="aiem-donut">
+							<svg viewBox="0 0 42 42" role="img" aria-label="Audience by status">
+								<circle cx="21" cy="21" r="15.915" fill="none" stroke="#f0f0f1" stroke-width="5"></circle>
+								<?php
+								$offset = 25; // start at 12 o'clock
+								$gap    = 0.9; // surface gap between segments
+								foreach ( $status_meta as $status => $meta ) :
+									$n = (int) ( $data['by_status'][ $status ] ?? 0 );
+									if ( $n <= 0 || $status_total <= 0 ) {
+										continue;
+									}
+									$share = $n / $status_total * 100;
+									$len   = max( 0.5, $share - ( $share < 100 ? $gap : 0 ) );
+									printf(
+										'<circle class="aiem-donut-seg" tabindex="0" cx="21" cy="21" r="15.915" fill="none" stroke="%s" stroke-width="5" stroke-dasharray="%s %s" stroke-dashoffset="%s" data-tip="%s" data-tip-value="%s"></circle>',
+										esc_attr( $meta[1] ),
+										esc_attr( round( $len, 3 ) ),
+										esc_attr( round( 100 - $len, 3 ) ),
+										esc_attr( round( $offset, 3 ) ),
+										esc_attr( $meta[0] ),
+										esc_attr( number_format( $n ) . ' (' . round( $share, 1 ) . '%)' )
+									);
+									$offset -= $share;
+								endforeach;
+								?>
+							</svg>
+							<div class="aiem-donut-center">
+								<strong><?php echo esc_html( number_format( $active ) ); ?></strong>
+								<span>active</span>
+							</div>
+						</div>
+						<dl class="aiem-donut-stats">
+							<div><dt>Growth</dt><dd><?php echo esc_html( $growth === null ? '—' : '+' . $growth . '%' ); ?></dd></div>
+							<div><dt>New subscribers</dt><dd><?php echo esc_html( number_format( $cur['new'] ) ); ?></dd></div>
+							<div><dt>Largest list</dt><dd class="is-text" title="<?php echo esc_attr( $top_list ); ?>"><?php echo esc_html( $top_list ); ?></dd></div>
+						</dl>
+					</div>
+					<ul class="aiem-donut-legend">
+						<?php foreach ( $status_meta as $status => $meta ) : ?>
+							<li><span class="aiem-swatch" style="background:<?php echo esc_attr( $meta[1] ); ?>"></span><?php echo esc_html( $meta[0] ); ?> <strong><?php echo esc_html( number_format( (int) ( $data['by_status'][ $status ] ?? 0 ) ) ); ?></strong></li>
+						<?php endforeach; ?>
+					</ul>
+				</div>
+			</div>
+
+			<div class="aiem-dashboard-grid">
+				<div class="aiem-panel">
+					<div class="aiem-card-head"><h3>Recent activity</h3><a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-logs' ) ); ?>">View all logs</a></div>
+					<?php if ( empty( $recent ) ) : ?>
+						<p class="aiem-dash-empty">No activity logged yet.</p>
 					<?php else : ?>
 					<table class="aiem-panel-table">
-						<thead><tr><th>Campaign</th><th>Sent</th><th>Open %</th></tr></thead>
+						<thead><tr><th>Event</th><th>Subscriber</th><th>Campaign</th><th>Time</th></tr></thead>
 						<tbody>
-						<?php foreach ( $top as $c ) : ?>
+						<?php foreach ( $recent as $log ) : ?>
 							<tr>
-								<td><a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-reports&campaign_id=' . $c->id ) ); ?>"><?php echo esc_html( $c->name ); ?></a></td>
-								<td><?php echo number_format( $c->total_sent ); ?></td>
-								<td><span class="aiem-badge aiem-status-subscribed"><?php echo esc_html( $c->open_rate ); ?>%</span></td>
+								<td><?php echo $this->event_badge( $log->event_type ); ?></td>
+								<td><?php echo esc_html( $log->subscriber_email ?? '—' ); ?></td>
+								<td><?php echo esc_html( $log->campaign_name ?? '—' ); ?></td>
+								<td class="aiem-muted"><?php echo esc_html( $log->created_at ); ?></td>
 							</tr>
 						<?php endforeach; ?>
 						</tbody>
 					</table>
 					<?php endif; ?>
 				</div>
-			</div>
 
-			<div class="aiem-panel">
-				<h3>Recent Activity</h3>
-				<?php if ( empty( $recent ) ) : ?>
-					<p style="color:#9ca3af;">No activity logged yet.</p>
-				<?php else : ?>
-				<table class="wp-list-table widefat fixed striped aiem-table">
-					<thead><tr><th style="width:130px">Event</th><th>Subscriber</th><th>Campaign</th><th style="width:160px">Time</th></tr></thead>
-					<tbody>
-					<?php foreach ( $recent as $log ) : ?>
-						<tr>
-							<td><?php echo $this->event_badge( $log->event_type ); ?></td>
-							<td><?php echo esc_html( $log->subscriber_email ?? '—' ); ?></td>
-							<td><?php echo esc_html( $log->campaign_name ?? '—' ); ?></td>
-							<td style="color:#6b7280;font-size:12px"><?php echo esc_html( $log->created_at ); ?></td>
-						</tr>
-					<?php endforeach; ?>
-					</tbody>
-				</table>
-				<?php endif; ?>
-				<p style="margin-top:8px"><a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-logs' ) ); ?>">View all logs →</a></p>
+				<div class="aiem-panel">
+					<div class="aiem-card-head"><h3>Top campaigns by open rate</h3><span>All time</span></div>
+					<?php if ( empty( $top ) ) : ?>
+						<p class="aiem-dash-empty">No sent campaigns yet.</p>
+					<?php else : ?>
+					<table class="aiem-panel-table">
+						<thead><tr><th>Campaign</th><th>Sent</th><th>Open rate</th></tr></thead>
+						<tbody>
+						<?php foreach ( $top as $c ) : ?>
+							<tr>
+								<td><a href="<?php echo esc_url( admin_url( 'admin.php?page=aiem-reports&campaign_id=' . $c->id ) ); ?>"><?php echo esc_html( $c->name ); ?></a></td>
+								<td><?php echo number_format( $c->total_sent ); ?></td>
+								<td><?php echo esc_html( $c->open_rate ); ?>%</td>
+							</tr>
+						<?php endforeach; ?>
+						</tbody>
+					</table>
+					<?php endif; ?>
+				</div>
 			</div>
 		</div>
 		<?php
@@ -1384,6 +1546,7 @@ class AIEM_Admin {
 		$stats       = $campaign_id ? AIEM_DB::get_campaign_stats( $campaign_id ) : null;
 		$sends       = $campaign_id ? AIEM_DB::get_sends_for_campaign( $campaign_id ) : [];
 		$click_links = $campaign_id ? AIEM_DB::get_click_breakdown( $campaign_id ) : [];
+		$runs        = $campaign_id ? AIEM_DB::get_campaign_runs( $campaign_id ) : [];
 		?>
 		<div class="wrap aiem-wrap">
 			<h1>Reports</h1>
@@ -1438,6 +1601,30 @@ class AIEM_Admin {
 				</button>
 			</div>
 			<?php endif; endif; ?>
+
+			<?php if ( ! empty( $runs ) ) : ?>
+			<h3>Previous Sends</h3>
+			<table class="wp-list-table widefat fixed striped aiem-table">
+				<thead>
+					<tr><th>Sent</th><th>Subject</th><th>Delivered</th><th>Failed</th><th>Bounced</th><th>Open Rate</th><th>Click Rate</th><th>Unsubs</th></tr>
+				</thead>
+				<tbody>
+				<?php foreach ( $runs as $run ) :
+					$run_sent = (int) $run->sent; ?>
+					<tr>
+						<td><?php echo $run->sent_at ? esc_html( date_i18n( 'M j, Y g:ia', strtotime( $run->sent_at ) ) ) : '—'; ?></td>
+						<td><?php echo esc_html( $run->subject ); ?></td>
+						<td><?php echo (int) $run->sent; ?></td>
+						<td><?php echo (int) $run->failed; ?></td>
+						<td><?php echo (int) $run->bounced; ?></td>
+						<td><?php echo esc_html( $run_sent ? round( (int) $run->opened / $run_sent * 100, 1 ) . '%' : '—' ); ?></td>
+						<td><?php echo esc_html( $run_sent ? round( (int) $run->clicked / $run_sent * 100, 1 ) . '%' : '—' ); ?></td>
+						<td><?php echo (int) $run->unsubscribed; ?></td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+			<?php endif; ?>
 
 			<?php if ( ! empty( $sends ) ) : ?>
 			<h3>Individual Sends</h3>
@@ -1647,6 +1834,24 @@ class AIEM_Admin {
 					<?php endif; ?>
 				</table>
 
+				<h2 class="title">Data</h2>
+				<table class="form-table">
+					<tr>
+						<th>Keep logs for</th>
+						<td>
+							<input type="number" name="aiem_log_retention_days" value="<?php echo (int) get_option( 'aiem_log_retention_days', 90 ); ?>" min="0" max="3650" class="small-text" /> days
+							<p class="description">Older log entries and finished workflow queue items are deleted once a day. Enter 0 to keep everything.</p>
+						</td>
+					</tr>
+					<tr>
+						<th>On uninstall</th>
+						<td>
+							<label><input type="checkbox" name="aiem_delete_on_uninstall" value="1" <?php checked( get_option( 'aiem_delete_on_uninstall', '0' ), '1' ); ?> /> Delete all data when the plugin is deleted</label>
+							<p class="description">Removes every subscriber, list, campaign, template, log and setting. Leave unticked to keep your data if the plugin is removed. Deactivating never deletes data.</p>
+						</td>
+					</tr>
+				</table>
+
 				<p class="submit"><button type="submit" class="button button-primary">Save Settings</button></p>
 			</form>
 
@@ -1660,7 +1865,7 @@ class AIEM_Admin {
 						<td>
 							<input type="number" name="aiem_purge_days" value="30" min="1" max="3650" class="small-text" /> days
 							<button type="submit" class="button button-secondary" style="margin-left:8px;">Purge Now</button>
-							<p class="description">Delete log entries older than this many days. The logs table grows indefinitely; purge periodically to keep it manageable.</p>
+							<p class="description">Delete log entries older than this many days right now. Logs are also trimmed automatically each day (see Data above).</p>
 						</td>
 					</tr>
 				</table>
@@ -1677,8 +1882,8 @@ class AIEM_Admin {
 			wp_die( 'Unauthorized.' );
 		}
 
-		$name = sanitize_text_field( $_POST['list_name'] ?? '' );
-		$desc = sanitize_textarea_field( $_POST['list_description'] ?? '' );
+		$name = sanitize_text_field( wp_unslash( $_POST['list_name'] ?? '' ) );
+		$desc = sanitize_textarea_field( wp_unslash( $_POST['list_description'] ?? '' ) );
 
 		if ( $name ) {
 			AIEM_DB::create_list( $name, $desc );
@@ -1706,7 +1911,7 @@ class AIEM_Admin {
 		}
 
 		$list_id = (int) ( $_POST['list_id'] ?? 0 );
-		$email   = sanitize_email( $_POST['email'] ?? '' );
+		$email   = sanitize_email( wp_unslash( $_POST['email'] ?? '' ) );
 		$back    = admin_url( 'admin.php?page=aiem-audience&list_id=' . $list_id );
 
 		if ( ! is_email( $email ) ) {
@@ -1716,8 +1921,8 @@ class AIEM_Admin {
 		$result = AIEM_DB::insert_subscriber( [
 			'list_id'    => $list_id,
 			'email'      => $email,
-			'first_name' => sanitize_text_field( $_POST['first_name'] ?? '' ),
-			'last_name'  => sanitize_text_field( $_POST['last_name'] ?? '' ),
+			'first_name' => sanitize_text_field( wp_unslash( $_POST['first_name'] ?? '' ) ),
+			'last_name'  => sanitize_text_field( wp_unslash( $_POST['last_name'] ?? '' ) ),
 			'source'     => 'manual',
 		] );
 
@@ -1774,7 +1979,7 @@ class AIEM_Admin {
 		}
 
 		$list_id = (int) ( $_POST['list_id'] ?? 0 );
-		$bulk    = sanitize_text_field( $_POST['bulk_action'] ?? '' );
+		$bulk    = sanitize_text_field( wp_unslash( $_POST['bulk_action'] ?? '' ) );
 		$ids     = array_map( 'intval', (array) ( $_POST['subscriber_ids'] ?? [] ) );
 		$back    = admin_url( 'admin.php?page=aiem-audience&list_id=' . $list_id );
 
@@ -1818,19 +2023,21 @@ class AIEM_Admin {
 			: [];
 
 		$options = [
-			'aiem_openai_key'       => sanitize_text_field( $_POST['aiem_openai_key'] ?? '' ),
-			'aiem_openai_model'     => sanitize_text_field( $_POST['aiem_openai_model'] ?? 'gpt-4o' ),
+			'aiem_openai_key'       => sanitize_text_field( wp_unslash( $_POST['aiem_openai_key'] ?? '' ) ),
+			'aiem_openai_model'     => sanitize_text_field( wp_unslash( $_POST['aiem_openai_model'] ?? 'gpt-4o' ) ),
 			'aiem_max_tokens'              => max( 500, min( 8000, (int) ( $_POST['aiem_max_tokens'] ?? 2500 ) ) ),
-			'aiem_system_prompt'           => sanitize_textarea_field( $_POST['aiem_system_prompt'] ?? '' ),
-			'aiem_template_system_prompt'  => sanitize_textarea_field( $_POST['aiem_template_system_prompt'] ?? '' ),
-			'aiem_from_name'        => sanitize_text_field( $_POST['aiem_from_name'] ?? '' ),
-			'aiem_from_email'       => sanitize_email( $_POST['aiem_from_email'] ?? '' ),
+			'aiem_system_prompt'           => sanitize_textarea_field( wp_unslash( $_POST['aiem_system_prompt'] ?? '' ) ),
+			'aiem_template_system_prompt'  => sanitize_textarea_field( wp_unslash( $_POST['aiem_template_system_prompt'] ?? '' ) ),
+			'aiem_from_name'        => sanitize_text_field( wp_unslash( $_POST['aiem_from_name'] ?? '' ) ),
+			'aiem_from_email'       => sanitize_email( wp_unslash( $_POST['aiem_from_email'] ?? '' ) ),
 			'aiem_default_list'     => (int) ( $_POST['aiem_default_list'] ?? 0 ),
 			'aiem_product_count'    => max( 1, (int) ( $_POST['aiem_product_count'] ?? 5 ) ),
 			'aiem_double_optin'     => isset( $_POST['aiem_double_optin'] ) ? '1' : '0',
 			'aiem_bounce_threshold' => max( 1, (int) ( $_POST['aiem_bounce_threshold'] ?? 3 ) ),
 			'aiem_batch_size'       => max( 1, min( 500, (int) ( $_POST['aiem_batch_size'] ?? 50 ) ) ),
 			'aiem_batch_delay'      => max( 1, min( 300, (int) ( $_POST['aiem_batch_delay'] ?? 5 ) ) ),
+			'aiem_log_retention_days'  => max( 0, min( 3650, (int) ( $_POST['aiem_log_retention_days'] ?? 90 ) ) ),
+			'aiem_delete_on_uninstall' => isset( $_POST['aiem_delete_on_uninstall'] ) ? '1' : '0',
 			'aiem_woo_categories'   => wp_json_encode( $woo_cats_raw ),
 			'aiem_woo_tags'         => wp_json_encode( $woo_tags_raw ),
 		];

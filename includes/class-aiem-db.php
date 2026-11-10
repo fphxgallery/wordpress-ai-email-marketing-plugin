@@ -128,6 +128,7 @@ class AIEM_DB {
 			open_count int(11) UNSIGNED NOT NULL DEFAULT 0,
 			clicked_at datetime DEFAULT NULL,
 			bounce_error text DEFAULT NULL,
+			unsubscribed_at datetime DEFAULT NULL,
 			PRIMARY KEY (id),
 			UNIQUE KEY campaign_subscriber (campaign_id, subscriber_id),
 			UNIQUE KEY tracking_key (tracking_key),
@@ -163,7 +164,28 @@ class AIEM_DB {
 			PRIMARY KEY (id)
 		) $charset;";
 
+		// One row per finished send of a campaign. Recurring campaigns and
+		// re-sends reuse the campaign, so their send rows are cleared each time;
+		// this keeps the totals from every earlier run.
+		$runs_sql = "CREATE TABLE {$wpdb->prefix}aiem_campaign_runs (
+			id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			campaign_id bigint(20) UNSIGNED NOT NULL,
+			subject varchar(500) NOT NULL DEFAULT '',
+			sent_at datetime DEFAULT NULL,
+			total int(11) UNSIGNED NOT NULL DEFAULT 0,
+			sent int(11) UNSIGNED NOT NULL DEFAULT 0,
+			failed int(11) UNSIGNED NOT NULL DEFAULT 0,
+			bounced int(11) UNSIGNED NOT NULL DEFAULT 0,
+			opened int(11) UNSIGNED NOT NULL DEFAULT 0,
+			clicked int(11) UNSIGNED NOT NULL DEFAULT 0,
+			unsubscribed int(11) UNSIGNED NOT NULL DEFAULT 0,
+			archived_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY campaign_id (campaign_id)
+		) $charset;";
+
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		dbDelta( $runs_sql );
 		dbDelta( $lists_sql );
 		dbDelta( $subscribers_sql );
 		dbDelta( $campaigns_sql );
@@ -178,6 +200,48 @@ class AIEM_DB {
 
 		update_option( 'aiem_db_version', AIEM_VERSION );
 		self::maybe_migrate_queue_table();
+		self::run_data_fixes();
+	}
+
+	/**
+	 * One-time data repairs, each guarded by its own option flag.
+	 */
+	private static function run_data_fixes(): void {
+		global $wpdb;
+
+		// Before 1.3.2 the settings form saved prompts without wp_unslash(), so
+		// every save added a backslash before each quote. Strip those.
+		if ( ! get_option( 'aiem_fix_prompt_slashes' ) ) {
+			foreach ( [ 'aiem_system_prompt', 'aiem_template_system_prompt', 'aiem_from_name' ] as $key ) {
+				$val = get_option( $key, null );
+				if ( ! is_string( $val ) ) {
+					continue;
+				}
+				$fixed = $val;
+				for ( $i = 0; $i < 10 && ( strpos( $fixed, "\\'" ) !== false || strpos( $fixed, '\\"' ) !== false ); $i++ ) {
+					$fixed = stripslashes( $fixed );
+				}
+				if ( $fixed !== $val ) {
+					update_option( $key, $fixed );
+				}
+			}
+			update_option( 'aiem_fix_prompt_slashes', 1 );
+		}
+
+		// Backfill per-send unsubscribe times from the event log (MySQL only;
+		// the SQLite dev driver does not translate multi-table UPDATE).
+		if ( ! get_option( 'aiem_fix_unsub_backfill' ) ) {
+			if ( ! isset( $GLOBALS['@pdo'] ) ) {
+				$wpdb->query(
+					"UPDATE {$wpdb->prefix}aiem_sends s
+					 JOIN {$wpdb->prefix}aiem_logs l
+					   ON l.event_type = 'unsubscribe' AND l.campaign_id = s.campaign_id AND l.subscriber_id = s.subscriber_id
+					 SET s.unsubscribed_at = l.created_at
+					 WHERE s.unsubscribed_at IS NULL"
+				);
+			}
+			update_option( 'aiem_fix_unsub_backfill', 1 );
+		}
 	}
 
 	public static function maybe_migrate_queue_table(): void {
@@ -207,6 +271,15 @@ class AIEM_DB {
 		);
 		if ( $cols && ! in_array( 'template_id', $cols, true ) ) {
 			$pdo->exec( "ALTER TABLE `{$campaigns}` ADD COLUMN `template_id` INTEGER NOT NULL DEFAULT 0" );
+		}
+
+		$sends = $wpdb->prefix . 'aiem_sends';
+		$cols  = array_column(
+			$pdo->query( "PRAGMA table_info(`{$sends}`)" )->fetchAll( \PDO::FETCH_ASSOC ),
+			'name'
+		);
+		if ( $cols && ! in_array( 'unsubscribed_at', $cols, true ) ) {
+			$pdo->exec( "ALTER TABLE `{$sends}` ADD COLUMN `unsubscribed_at` TEXT DEFAULT NULL" );
 		}
 	}
 
@@ -283,8 +356,14 @@ class AIEM_DB {
 		) ?: [];
 	}
 
+	/** Count subscribers on a list. Pass '' as $status to count every status. */
 	public static function count_subscribers( int $list_id, string $status = 'subscribed' ): int {
 		global $wpdb;
+		if ( $status === '' ) {
+			return (int) $wpdb->get_var(
+				$wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}aiem_subscribers WHERE list_id = %d", $list_id )
+			);
+		}
 		return (int) $wpdb->get_var(
 			$wpdb->prepare(
 				"SELECT COUNT(*) FROM {$wpdb->prefix}aiem_subscribers WHERE list_id = %d AND status = %s",
@@ -636,7 +715,48 @@ class AIEM_DB {
 			$wpdb->query( "DELETE FROM {$wpdb->prefix}aiem_click_events WHERE send_id IN ($in)" );
 		}
 		$wpdb->delete( "{$wpdb->prefix}aiem_sends", [ 'campaign_id' => $id ], [ '%d' ] );
+		$wpdb->delete( "{$wpdb->prefix}aiem_campaign_runs", [ 'campaign_id' => $id ], [ '%d' ] );
 		return (bool) $wpdb->delete( "{$wpdb->prefix}aiem_campaigns", [ 'id' => $id ], [ '%d' ] );
+	}
+
+	/**
+	 * Save the totals of a campaign's current sends as a history row. Call this
+	 * before clear_sends() so a recurrence or re-send does not erase its stats.
+	 */
+	public static function archive_campaign_run( int $id ): void {
+		global $wpdb;
+		$campaign = self::get_campaign( $id );
+		$stats    = self::get_campaign_stats( $id );
+		if ( ! $campaign || ( (int) $stats->sent + (int) $stats->failed + (int) $stats->bounced ) === 0 ) {
+			return; // nothing was actually sent in this run
+		}
+		$row = [
+			'campaign_id'  => $id,
+			'subject'      => (string) $campaign->subject,
+			'sent_at'      => $campaign->sent_at ?: current_time( 'mysql' ),
+			'total'        => (int) $stats->total,
+			'sent'         => (int) $stats->sent,
+			'failed'       => (int) $stats->failed,
+			'bounced'      => (int) $stats->bounced,
+			'opened'       => (int) $stats->opened,
+			'clicked'      => (int) $stats->clicked,
+			'unsubscribed' => (int) $stats->unsubscribed,
+		];
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			self::pdo_insert( $wpdb->prefix . 'aiem_campaign_runs', $row );
+			return;
+		}
+		$wpdb->insert( "{$wpdb->prefix}aiem_campaign_runs", $row, [ '%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%d' ] );
+	}
+
+	public static function get_campaign_runs( int $id ): array {
+		global $wpdb;
+		return $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$wpdb->prefix}aiem_campaign_runs WHERE campaign_id = %d ORDER BY sent_at DESC, id DESC",
+				$id
+			)
+		) ?: [];
 	}
 
 	public static function clear_sends( int $id ): void {
@@ -665,11 +785,26 @@ class AIEM_DB {
 		if ( ! $offset ) {
 			return;
 		}
-		$next = date( 'Y-m-d H:i:s', strtotime( $offset, current_time( 'timestamp' ) ) );
+		// Step from the planned time, not from "now": otherwise each run lands a
+		// little later than the last (cron delay + send duration) and the
+		// schedule drifts. Skip forward past any occurrences that were missed.
+		$tz  = wp_timezone();
+		$now = new DateTimeImmutable( 'now', $tz );
+		try {
+			$base = $campaign->scheduled_at ? new DateTimeImmutable( $campaign->scheduled_at, $tz ) : $now;
+		} catch ( Exception $e ) {
+			$base = $now;
+		}
+		$next = $base->modify( $offset );
+		for ( $i = 0; $next <= $now && $i < 2000; $i++ ) {
+			$next = $next->modify( $offset );
+		}
+
+		self::archive_campaign_run( $id );
 		self::clear_sends( $id );
 		self::update_campaign( $id, [
 			'status'       => 'scheduled',
-			'scheduled_at' => $next,
+			'scheduled_at' => $next->format( 'Y-m-d H:i:s' ),
 		] );
 	}
 
@@ -788,6 +923,17 @@ class AIEM_DB {
 		);
 	}
 
+	/** Record that the unsubscribe came from this send's link. */
+	public static function mark_send_unsubscribed( int $send_id ): void {
+		global $wpdb;
+		$wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_sends SET unsubscribed_at = %s WHERE id = %d AND unsubscribed_at IS NULL",
+				current_time( 'mysql' ), $send_id
+			)
+		);
+	}
+
 	public static function increment_bounce_count( int $subscriber_id ): int {
 		global $wpdb;
 		$wpdb->query(
@@ -874,7 +1020,7 @@ class AIEM_DB {
 					SUM(CASE WHEN s.status = 'bounced' THEN 1 ELSE 0 END) AS bounced,
 					SUM(CASE WHEN s.open_count > 0 THEN 1 ELSE 0 END) AS opened,
 					SUM(CASE WHEN s.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
-					SUM(CASE WHEN sub.status = 'unsubscribed' THEN 1 ELSE 0 END) AS unsubscribed
+					SUM(CASE WHEN s.unsubscribed_at IS NOT NULL THEN 1 ELSE 0 END) AS unsubscribed
 				 FROM {$wpdb->prefix}aiem_sends s
 				 JOIN {$wpdb->prefix}aiem_subscribers sub ON sub.id = s.subscriber_id
 				 WHERE s.campaign_id = %d",
@@ -949,6 +1095,19 @@ class AIEM_DB {
 			$wpdb->prepare( "DELETE FROM {$wpdb->prefix}aiem_logs WHERE created_at < %s", $cutoff )
 		);
 		return (int) $wpdb->rows_affected;
+	}
+
+	/** Remove finished workflow queue rows older than $days. */
+	public static function purge_workflow_queue( int $days ): int {
+		global $wpdb;
+		$cutoff = wp_date( 'Y-m-d H:i:s', time() - $days * DAY_IN_SECONDS );
+		return (int) $wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$wpdb->prefix}aiem_workflow_queue
+				 WHERE status IN ('sent','failed','skipped') AND processed_at IS NOT NULL AND processed_at < %s",
+				$cutoff
+			)
+		);
 	}
 
 	public static function get_recent_logs( int $limit = 10 ): array {
@@ -1473,6 +1632,128 @@ class AIEM_DB {
 			'total_opened', 'total_clicked', 'active_workflows',
 			'open_rate', 'click_rate'
 		);
+	}
+
+	/**
+	 * Everything the dashboard shows for the last $days days, plus the same
+	 * figures for the $days before that so each KPI can show its change.
+	 *
+	 * Activity comes from the event log. Log times are stored by the database
+	 * clock (UTC on most hosts), so events are fetched per hour and bucketed
+	 * into days in the site's timezone here.
+	 */
+	public static function get_dashboard_data( int $days ): array {
+		global $wpdb;
+
+		$days  = max( 1, min( 365, $days ) );
+		$tz    = wp_timezone();
+		$utc   = new DateTimeZone( 'UTC' );
+		$start = ( new DateTimeImmutable( 'today', $tz ) )->modify( '-' . ( $days - 1 ) . ' days' );
+		$prev  = $start->modify( "-{$days} days" );
+		$fmt   = 'Y-m-d H:i:s';
+
+		$start_utc = $start->setTimezone( $utc )->format( $fmt );
+		$prev_utc  = $prev->setTimezone( $utc )->format( $fmt );
+		$events    = "'send','open','click','unsubscribe'";
+
+		// Period totals (events, and distinct sends for open/click rates).
+		$totals = function ( string $from, ?string $to ) use ( $wpdb, $events ): array {
+			$where = $wpdb->prepare( 'created_at >= %s', $from );
+			if ( $to ) {
+				$where .= $wpdb->prepare( ' AND created_at < %s', $to );
+			}
+			$out = [ 'send' => 0, 'open' => 0, 'click' => 0, 'unsubscribe' => 0, 'open_u' => 0, 'click_u' => 0 ];
+			$rows = $wpdb->get_results(
+				"SELECT event_type, COUNT(*) AS c, COUNT(DISTINCT send_id) AS u
+				 FROM {$wpdb->prefix}aiem_logs
+				 WHERE {$where} AND event_type IN ({$events})
+				 GROUP BY event_type"
+			) ?: [];
+			foreach ( $rows as $r ) {
+				$out[ $r->event_type ] = (int) $r->c;
+				if ( $r->event_type === 'open' || $r->event_type === 'click' ) {
+					$out[ $r->event_type . '_u' ] = (int) $r->u;
+				}
+			}
+			return $out;
+		};
+		$cur = $totals( $start_utc, null );
+		$old = $totals( $prev_utc, $start_utc );
+
+		// New subscribers (subscribed_at is stored in site time).
+		$new_subs = function ( string $from, ?string $to ) use ( $wpdb ): int {
+			$where = $wpdb->prepare( 'subscribed_at >= %s', $from );
+			if ( $to ) {
+				$where .= $wpdb->prepare( ' AND subscribed_at < %s', $to );
+			}
+			return (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}aiem_subscribers WHERE {$where}" );
+		};
+		$cur['new'] = $new_subs( $start->format( $fmt ), null );
+		$old['new'] = $new_subs( $prev->format( $fmt ), $start->format( $fmt ) );
+
+		// Daily series.
+		$dates  = [];
+		$series = [ 'send' => [], 'open' => [], 'click' => [], 'new' => [], 'unsubscribe' => [] ];
+		for ( $i = 0; $i < $days; $i++ ) {
+			$d       = $start->modify( "+{$i} days" )->format( 'Y-m-d' );
+			$dates[] = $d;
+			foreach ( $series as $k => $_ ) {
+				$series[ $k ][ $d ] = 0;
+			}
+		}
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT SUBSTR(created_at, 1, 13) AS hr, event_type, COUNT(*) AS c
+				 FROM {$wpdb->prefix}aiem_logs
+				 WHERE created_at >= %s AND event_type IN ({$events})
+				 GROUP BY SUBSTR(created_at, 1, 13), event_type",
+				$start_utc
+			)
+		) ?: [];
+		foreach ( $rows as $r ) {
+			try {
+				$day = ( new DateTimeImmutable( $r->hr . ':00:00', $utc ) )->setTimezone( $tz )->format( 'Y-m-d' );
+			} catch ( Exception $e ) {
+				continue;
+			}
+			if ( isset( $series[ $r->event_type ][ $day ] ) ) {
+				$series[ $r->event_type ][ $day ] += (int) $r->c;
+			}
+		}
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT SUBSTR(subscribed_at, 1, 10) AS d, COUNT(*) AS c
+				 FROM {$wpdb->prefix}aiem_subscribers
+				 WHERE subscribed_at >= %s
+				 GROUP BY SUBSTR(subscribed_at, 1, 10)",
+				$start->format( $fmt )
+			)
+		) ?: [];
+		foreach ( $rows as $r ) {
+			if ( isset( $series['new'][ $r->d ] ) ) {
+				$series['new'][ $r->d ] = (int) $r->c;
+			}
+		}
+
+		// Audience breakdowns (current state, not period-bound).
+		$by_status = [];
+		foreach ( $wpdb->get_results( "SELECT status, COUNT(*) AS c FROM {$wpdb->prefix}aiem_subscribers GROUP BY status" ) ?: [] as $r ) {
+			$by_status[ $r->status ] = (int) $r->c;
+		}
+		$by_source = [];
+		foreach ( $wpdb->get_results( "SELECT source, COUNT(*) AS c FROM {$wpdb->prefix}aiem_subscribers WHERE status = 'subscribed' GROUP BY source ORDER BY c DESC" ) ?: [] as $r ) {
+			$by_source[ $r->source ?: 'unknown' ] = (int) $r->c;
+		}
+
+		return [
+			'days'      => $days,
+			'dates'     => $dates,
+			'series'    => array_map( 'array_values', $series ),
+			'current'   => $cur,
+			'previous'  => $old,
+			'by_status' => $by_status,
+			'by_source' => $by_source,
+		];
 	}
 
 	public static function get_subscriber_growth( int $days = 30 ): array {

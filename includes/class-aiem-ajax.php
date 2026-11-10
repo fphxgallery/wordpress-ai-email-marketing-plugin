@@ -53,7 +53,7 @@ class AIEM_Ajax {
 	public function generate_email(): void {
 		$this->verify_admin();
 
-		$prompt      = sanitize_textarea_field( $_POST['prompt'] ?? '' );
+		$prompt      = sanitize_textarea_field( wp_unslash( $_POST['prompt'] ?? '' ) );
 		$use_woo     = ! empty( $_POST['use_woo'] );
 		$campaign_id = (int) ( $_POST['campaign_id'] ?? 0 );
 
@@ -113,7 +113,7 @@ class AIEM_Ajax {
 	public function generate_subject(): void {
 		$this->verify_admin();
 
-		$prompt = sanitize_textarea_field( $_POST['prompt'] ?? '' );
+		$prompt = sanitize_textarea_field( wp_unslash( $_POST['prompt'] ?? '' ) );
 		if ( ! $prompt ) {
 			wp_send_json_error( [ 'message' => 'Prompt is required.' ] );
 		}
@@ -220,7 +220,7 @@ class AIEM_Ajax {
 		$this->verify_admin();
 
 		$campaign_id  = (int) ( $_POST['campaign_id'] ?? 0 );
-		$scheduled_at = sanitize_text_field( $_POST['scheduled_at'] ?? '' );
+		$scheduled_at = sanitize_text_field( wp_unslash( $_POST['scheduled_at'] ?? '' ) );
 
 		if ( ! $campaign_id || ! $scheduled_at ) {
 			wp_send_json_error( [ 'message' => 'Campaign ID and schedule time required.' ] );
@@ -372,7 +372,7 @@ class AIEM_Ajax {
 		$this->verify_admin();
 
 		$campaign_id = (int) ( $_POST['campaign_id'] ?? 0 );
-		$to_email    = sanitize_email( $_POST['to_email'] ?? get_option( 'admin_email' ) );
+		$to_email    = sanitize_email( wp_unslash( $_POST['to_email'] ?? get_option( 'admin_email' ) ) );
 
 		if ( ! $campaign_id ) {
 			wp_send_json_error( [ 'message' => 'Campaign ID required.' ] );
@@ -404,7 +404,7 @@ class AIEM_Ajax {
 		$blocks_arr  = json_decode( $blocks_raw, true );
 		$blocks      = is_array( $blocks_arr ) ? wp_json_encode( $blocks_arr ) : '[]';
 
-		$recur_schedule = sanitize_text_field( $_POST['recur_schedule'] ?? '' );
+		$recur_schedule = sanitize_text_field( wp_unslash( $_POST['recur_schedule'] ?? '' ) );
 		$valid_recur    = [ '', 'daily', 'weekly', 'monthly' ];
 		if ( ! in_array( $recur_schedule, $valid_recur, true ) ) {
 			$recur_schedule = '';
@@ -573,7 +573,7 @@ class AIEM_Ajax {
 		$this->verify_admin();
 
 		$id       = (int) ( $_POST['form_id'] ?? 0 );
-		$name     = sanitize_text_field( $_POST['name'] ?? '' );
+		$name     = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
 		$list_id  = (int) ( $_POST['list_id'] ?? 0 );
 		$fields   = json_decode( wp_unslash( $_POST['fields'] ?? '[]' ), true );
 		$settings = json_decode( wp_unslash( $_POST['settings'] ?? '{}' ), true );
@@ -628,7 +628,7 @@ class AIEM_Ajax {
 			set_transient( $rl_key, $attempts + 1, 10 * MINUTE_IN_SECONDS );
 		}
 
-		$email        = sanitize_email( $_POST['email'] ?? '' );
+		$email        = sanitize_email( wp_unslash( $_POST['email'] ?? '' ) );
 		$list_id      = (int) ( $_POST['list_id'] ?? 0 );
 		$first_name   = sanitize_text_field( wp_unslash( $_POST['first_name'] ?? '' ) );
 		$last_name    = sanitize_text_field( wp_unslash( $_POST['last_name'] ?? '' ) );
@@ -778,7 +778,7 @@ class AIEM_Ajax {
 		$styling  = sanitize_text_field( wp_unslash( $_POST['action_email_styling'] ?? 'none' ) );
 
 		$delay_value = max( 0, (int) ( $_POST['delay_value'] ?? 0 ) );
-		$delay_unit  = sanitize_text_field( $_POST['delay_unit'] ?? 'minutes' );
+		$delay_unit  = sanitize_text_field( wp_unslash( $_POST['delay_unit'] ?? 'minutes' ) );
 
 		$valid_triggers = [ 'subscriber_added', 'subscriber_unsubscribed', 'campaign_sent', 'post_published' ];
 		if ( ! $name || ! in_array( $trigger, $valid_triggers ) ) {
@@ -859,7 +859,7 @@ class AIEM_Ajax {
 		$this->verify_admin();
 
 		$id      = (int) ( $_POST['segment_id'] ?? 0 );
-		$name    = sanitize_text_field( $_POST['name'] ?? '' );
+		$name    = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
 		$list_id = (int) ( $_POST['list_id'] ?? 0 );
 		$filters = json_decode( wp_unslash( $_POST['filters'] ?? '[]' ), true );
 
@@ -994,6 +994,7 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'This campaign is already sending.' ] );
 		}
 
+		AIEM_DB::archive_campaign_run( $campaign_id );
 		AIEM_DB::clear_sends( $campaign_id );
 		AIEM_DB::update_campaign( $campaign_id, [ 'sent_at' => null ] );
 		$count = AIEM_Sender::enqueue_sends( $campaign_id );

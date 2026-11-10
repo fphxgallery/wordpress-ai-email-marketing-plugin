@@ -14,6 +14,7 @@ class AIEM_Cron {
 		add_action( 'aiem_process_batch',      [ $this, 'process_batch' ] );
 		add_action( 'aiem_check_scheduled',    [ $this, 'check_scheduled' ] );
 		add_action( 'aiem_process_workflows',  [ $this, 'process_workflows' ] );
+		add_action( 'aiem_daily_maintenance',  [ $this, 'daily_maintenance' ] );
 		add_action( 'init',                    [ $this, 'register_schedules' ] );
 	}
 
@@ -34,6 +35,22 @@ class AIEM_Cron {
 		if ( ! wp_next_scheduled( 'aiem_process_workflows' ) ) {
 			wp_schedule_event( time(), 'aiem_5min', 'aiem_process_workflows' );
 		}
+		if ( ! wp_next_scheduled( 'aiem_daily_maintenance' ) ) {
+			wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'aiem_daily_maintenance' );
+		}
+	}
+
+	/**
+	 * Keep the logs and workflow queue tables from growing forever.
+	 * Retention is set in Settings; 0 keeps everything.
+	 */
+	public function daily_maintenance(): void {
+		$days = (int) get_option( 'aiem_log_retention_days', 90 );
+		if ( $days <= 0 ) {
+			return;
+		}
+		AIEM_DB::purge_logs( $days );
+		AIEM_DB::purge_workflow_queue( $days );
 	}
 
 	public function process_batch( int $campaign_id ): void {

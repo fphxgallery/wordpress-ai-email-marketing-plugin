@@ -142,6 +142,7 @@ class AIEM_Tracker {
 
 		$subscriber_id = 0;
 		$campaign_id   = null;
+		$send_id       = 0;
 
 		if ( $key ) {
 			// Link from a campaign email: the tracking key identifies the send.
@@ -149,6 +150,7 @@ class AIEM_Tracker {
 			if ( $send ) {
 				$subscriber_id = (int) $send->subscriber_id;
 				$campaign_id   = (int) $send->campaign_id;
+				$send_id       = (int) $send->id;
 			}
 			$link_args = [ 'aiem_unsub' => '1', 'k' => $key ];
 		} elseif ( $sid && $tok && hash_equals( AIEM_Sender::subscriber_unsub_token( $sid ), $tok ) ) {
@@ -179,6 +181,10 @@ class AIEM_Tracker {
 		// unsubscribe_subscriber() is true only when the status actually changed,
 		// so repeat clicks don't log or fire workflows again.
 		if ( $subscriber_id && AIEM_DB::unsubscribe_subscriber( $subscriber_id ) ) {
+			if ( $send_id ) {
+				// Credit the unsubscribe to the campaign whose link was used.
+				AIEM_DB::mark_send_unsubscribed( $send_id );
+			}
 			AIEM_Logs::log( AIEM_Logs::EVENT_UNSUBSCRIBE, [
 				'subscriber_id' => $subscriber_id,
 				'campaign_id'   => $campaign_id,

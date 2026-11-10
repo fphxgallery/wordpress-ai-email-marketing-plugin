@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AI Email Marketing
  * Description: OpenAI-powered email marketing with WooCommerce product integration, subscriber management, import/export, open/click tracking, and scheduled campaigns.
- * Version:     1.3.1
+ * Version:     1.3.2
  * Author:      @fPHXGallery
  * License:     GPL-2.0-or-later
  * Text Domain: ai-email-marketing
@@ -12,7 +12,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'AIEM_VERSION',    '1.3.1' );
+define( 'AIEM_VERSION',    '1.3.2' );
 define( 'AIEM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'AIEM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -65,6 +65,13 @@ final class AIEM_Plugin {
 
 register_activation_hook( __FILE__, function (): void {
 	AIEM_DB::create_tables();
+} );
+
+register_deactivation_hook( __FILE__, function (): void {
+	// Stop all scheduled work. Data is kept; reactivating re-registers the jobs.
+	foreach ( [ 'aiem_check_scheduled', 'aiem_process_workflows', 'aiem_process_batch', 'aiem_daily_maintenance' ] as $hook ) {
+		wp_unschedule_hook( $hook );
+	}
 } );
 
 add_action( 'plugins_loaded', function (): void {
