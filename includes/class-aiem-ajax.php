@@ -118,44 +118,25 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'Prompt is required.' ] );
 		}
 
-		$api_key = get_option( 'aiem_openai_key', '' );
-		if ( ! $api_key ) {
-			wp_send_json_error( [ 'message' => 'OpenAI API key not configured.' ] );
-		}
-
-		$model = get_option( 'aiem_openai_model', 'gpt-4o' );
-
 		$system_prompt = "You are an expert email marketing copywriter. "
 			. "Respond with a single JSON object (no markdown, no code fences) containing exactly two keys:\n"
 			. "  \"subject\"      — a compelling email subject line (under 60 characters)\n"
 			. "  \"preview_text\" — inbox preview text that complements the subject (under 100 characters)";
 
-		$body = wp_json_encode( [
-			'model'       => $model,
-			'messages'    => [
+		$data = AIEM_OpenAI::chat(
+			[
 				[ 'role' => 'system', 'content' => $system_prompt ],
 				[ 'role' => 'user',   'content' => $prompt ],
 			],
-			'max_tokens'  => 200,
-			'temperature' => 0.8,
-		] );
-
-		$response = wp_remote_post( 'https://api.openai.com/v1/chat/completions', [
-			'headers' => [
-				'Authorization' => 'Bearer ' . $api_key,
-				'Content-Type'  => 'application/json',
-			],
-			'body'    => $body,
-			'timeout' => 30,
-		] );
-
-		if ( is_wp_error( $response ) ) {
-			wp_send_json_error( [ 'message' => $response->get_error_message() ] );
+			200,
+			0.8
+		);
+		if ( is_wp_error( $data ) ) {
+			wp_send_json_error( [ 'message' => $data->get_error_message() ] );
 		}
 
-		$data    = json_decode( wp_remote_retrieve_body( $response ), true );
-		$content = $data['choices'][0]['message']['content'] ?? '';
-		$parsed  = json_decode( $content, true );
+		$content = trim( (string) ( $data['choices'][0]['message']['content'] ?? '' ) );
+		$parsed  = json_decode( preg_replace( '/^```[a-zA-Z]*\s*|\s*```$/', '', $content ), true );
 
 		if ( ! is_array( $parsed ) ) {
 			wp_send_json_error( [ 'message' => 'Could not parse response.' ] );

@@ -23,14 +23,131 @@ class AIEM_OpenAI {
 			. 'Return the complete filled template as the html field.';
 	}
 
-	public static function generate( string $prompt, array $products = [], string $template_html = '' ): array|WP_Error {
+	/** Model used when none has been saved in Settings. */
+	const DEFAULT_MODEL = 'gpt-6.1-sol';
+
+	/**
+	 * Models offered in Settings: id => label. Checked against OpenAI's model
+	 * and deprecation pages on 2026-11-10.
+	 */
+	public static function models(): array {
+		return [
+			'gpt-6.1-sol'   => 'GPT-6.1 Sol — balanced (recommended)',
+			'gpt-6.1-terra' => 'GPT-6.1 Terra — efficient',
+			'gpt-6-luna'    => 'GPT-6 Luna — fastest, lowest cost',
+			'gpt-6-astra'   => 'GPT-6 Astra — most capable, highest cost',
+			'gpt-4o'        => 'GPT-4o — legacy, retires Jan 14, 2027',
+			'gpt-4o-mini'   => 'GPT-4o mini — legacy, retires Jan 14, 2027',
+		];
+	}
+
+	/**
+	 * What to use when OpenAI reports a model no longer exists, so a retired
+	 * model in Settings does not silently stop AI generation.
+	 */
+	public static function replacement_for( string $model ): string {
+		$map = [
+			'gpt-4-turbo'   => 'gpt-6.1-sol',
+			'gpt-3.5-turbo' => 'gpt-6.1-terra',
+			'gpt-4o'        => 'gpt-6.1-terra',
+			'gpt-4o-mini'   => 'gpt-6-luna',
+		];
+		return $map[ $model ] ?? '';
+	}
+
+	public static function model(): string {
+		return (string) ( get_option( 'aiem_openai_model', self::DEFAULT_MODEL ) ?: self::DEFAULT_MODEL );
+	}
+
+	/**
+	 * GPT-4-era and older models take max_tokens + temperature. Everything
+	 * newer is a reasoning model with a different parameter set.
+	 */
+	private static function is_legacy_model( string $model ): bool {
+		return (bool) preg_match( '/^gpt-(3\.5|4)/', $model );
+	}
+
+	private static function build_payload( string $model, array $messages, int $max_output, float $temperature ): array {
+		$payload = [
+			'model'           => $model,
+			'messages'        => $messages,
+			// JSON mode: the model must return one valid JSON object.
+			'response_format' => [ 'type' => 'json_object' ],
+		];
+		if ( self::is_legacy_model( $model ) ) {
+			$payload['max_tokens']  = $max_output;
+			$payload['temperature'] = $temperature;
+		} else {
+			// Reasoning models: the cap covers hidden reasoning tokens as well
+			// as the visible answer, so leave room for both. Email copy needs
+			// little reasoning; "low" keeps it fast and cheap.
+			$payload['max_completion_tokens'] = $max_output + max( 2000, $max_output );
+			$payload['reasoning_effort']      = 'low';
+		}
+		return $payload;
+	}
+
+	/**
+	 * Send a chat request with the model chosen in Settings and return the
+	 * decoded response. Adapts when the API rejects a parameter the model does
+	 * not support, and falls back when a retired model no longer exists.
+	 */
+	public static function chat( array $messages, int $max_output, float $temperature = 0.7 ): array|WP_Error {
 		$api_key = get_option( 'aiem_openai_key', '' );
 		if ( ! $api_key ) {
 			return new WP_Error( 'no_key', 'OpenAI API key not configured.' );
 		}
 
-		$model = get_option( 'aiem_openai_model', 'gpt-4o' );
+		$model   = self::model();
+		$payload = self::build_payload( $model, $messages, $max_output, $temperature );
+		$result  = null;
 
+		for ( $attempt = 0; $attempt < 5; $attempt++ ) {
+			$result = self::request( $api_key, $payload );
+			if ( ! is_wp_error( $result ) ) {
+				return $result;
+			}
+			$msg  = $result->get_error_message();
+			$code = (string) ( $result->get_error_data()['code'] ?? '' );
+
+			// Retired or unknown model: switch to its replacement once.
+			$fallback = self::replacement_for( $payload['model'] );
+			if ( $fallback && ( $code === 'model_not_found' || preg_match( '/does not exist|has been (deprecated|retired|shut ?down)|no longer (available|supported)/i', $msg ) ) ) {
+				AIEM_Logs::log( AIEM_Logs::EVENT_CRON_CHECK, [
+					'action' => 'ai_model_unavailable',
+					'model'  => $payload['model'],
+					'using'  => $fallback,
+					'error'  => $msg,
+				] );
+				$payload = self::build_payload( $fallback, $messages, $max_output, $temperature );
+				continue;
+			}
+
+			// Token-limit parameter under the wrong name for this model.
+			if ( isset( $payload['max_tokens'] ) && stripos( $msg, 'max_tokens' ) !== false ) {
+				$payload['max_completion_tokens'] = $payload['max_tokens'] + max( 2000, $payload['max_tokens'] );
+				unset( $payload['max_tokens'] );
+				continue;
+			}
+			if ( isset( $payload['max_completion_tokens'] ) && stripos( $msg, 'max_completion_tokens' ) !== false ) {
+				$payload['max_tokens'] = $max_output;
+				unset( $payload['max_completion_tokens'] );
+				continue;
+			}
+			// Optional parameters this model does not accept: drop and retry.
+			foreach ( [ 'temperature', 'reasoning_effort', 'response_format' ] as $param ) {
+				if ( isset( $payload[ $param ] ) && stripos( $msg, $param ) !== false ) {
+					unset( $payload[ $param ] );
+					continue 2;
+				}
+			}
+			break;
+		}
+
+		return $result;
+	}
+
+	public static function generate( string $prompt, array $products = [], string $template_html = '' ): array|WP_Error {
 		if ( $template_html ) {
 			$body_instructions = get_option( 'aiem_template_system_prompt', self::default_template_prompt() );
 		} else {
@@ -66,25 +183,19 @@ class AIEM_OpenAI {
 			}
 		}
 
-		$payload = [
-			'model'    => $model,
-			'messages' => [
+		$max_output = (int) get_option( 'aiem_max_tokens', 2500 );
+		if ( $template_html ) {
+			$max_output = max( 4000, $max_output );
+		}
+
+		$result = self::chat(
+			[
 				[ 'role' => 'system', 'content' => $system_prompt ],
 				[ 'role' => 'user',   'content' => $user_content ],
 			],
-			'max_tokens'      => $template_html ? max( 4000, (int) get_option( 'aiem_max_tokens', 2500 ) ) : (int) get_option( 'aiem_max_tokens', 2500 ),
-			'temperature'     => 0.7,
-			// JSON mode: the model must return one valid JSON object.
-			'response_format' => [ 'type' => 'json_object' ],
-		];
-
-		$result = self::request( $api_key, $payload );
-
-		// Older models reject response_format; retry once without it.
-		if ( is_wp_error( $result ) && stripos( $result->get_error_message(), 'response_format' ) !== false ) {
-			unset( $payload['response_format'] );
-			$result = self::request( $api_key, $payload );
-		}
+			$max_output,
+			0.7
+		);
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -130,11 +241,6 @@ class AIEM_OpenAI {
 	 * Rewrite one piece of email copy. Returns the new text or WP_Error.
 	 */
 	public static function rewrite( string $text, string $instruction = '', bool $is_html = false ): string|WP_Error {
-		$api_key = get_option( 'aiem_openai_key', '' );
-		if ( ! $api_key ) {
-			return new WP_Error( 'no_key', 'OpenAI API key not configured.' );
-		}
-
 		$system = 'You are an expert email marketing copywriter. Rewrite the text you are given. '
 			. 'Keep it about the same length unless told otherwise, keep any {{merge_tags}} exactly as written, and do not add a greeting or sign-off that was not there. '
 			. ( $is_html
@@ -144,22 +250,14 @@ class AIEM_OpenAI {
 
 		$user = ( $instruction !== '' ? "Instruction: {$instruction}\n\n" : '' ) . "Text to rewrite:\n{$text}";
 
-		$payload = [
-			'model'           => get_option( 'aiem_openai_model', 'gpt-4o' ),
-			'messages'        => [
+		$result = self::chat(
+			[
 				[ 'role' => 'system', 'content' => $system ],
 				[ 'role' => 'user',   'content' => $user ],
 			],
-			'max_tokens'      => 800,
-			'temperature'     => 0.8,
-			'response_format' => [ 'type' => 'json_object' ],
-		];
-
-		$result = self::request( $api_key, $payload );
-		if ( is_wp_error( $result ) && stripos( $result->get_error_message(), 'response_format' ) !== false ) {
-			unset( $payload['response_format'] );
-			$result = self::request( $api_key, $payload );
-		}
+			800,
+			0.8
+		);
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -199,7 +297,11 @@ class AIEM_OpenAI {
 		$data = json_decode( wp_remote_retrieve_body( $response ), true );
 
 		if ( $code !== 200 || ! is_array( $data ) ) {
-			return new WP_Error( 'openai_error', $data['error']['message'] ?? 'Unknown OpenAI error' );
+			return new WP_Error(
+				'openai_error',
+				$data['error']['message'] ?? 'Unknown OpenAI error',
+				[ 'code' => (string) ( $data['error']['code'] ?? '' ), 'status' => (int) $code ]
+			);
 		}
 
 		return $data;

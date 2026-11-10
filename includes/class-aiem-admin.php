@@ -1690,18 +1690,33 @@ class AIEM_Admin {
 					<tr>
 						<th>Model</th>
 						<td>
+							<?php
+							$aiem_models  = AIEM_OpenAI::models();
+							$aiem_current = AIEM_OpenAI::model();
+							$aiem_retired = ! isset( $aiem_models[ $aiem_current ] );
+							if ( $aiem_retired ) {
+								// Keep showing a saved model that is no longer offered rather than silently changing it.
+								$aiem_models = [ $aiem_current => $aiem_current . ' — retired by OpenAI' ] + $aiem_models;
+							}
+							?>
 							<select name="aiem_openai_model">
-								<?php foreach ( [ 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo' ] as $m ) : ?>
-									<option value="<?php echo esc_attr( $m ); ?>" <?php selected( get_option( 'aiem_openai_model', 'gpt-4o' ), $m ); ?>><?php echo esc_html( $m ); ?></option>
+								<?php foreach ( $aiem_models as $m => $m_label ) : ?>
+									<option value="<?php echo esc_attr( $m ); ?>" <?php selected( $aiem_current, $m ); ?>><?php echo esc_html( $m_label ); ?></option>
 								<?php endforeach; ?>
 							</select>
+							<?php if ( $aiem_retired ) :
+								$aiem_repl = AIEM_OpenAI::replacement_for( $aiem_current ); ?>
+								<p class="description"><strong>This model has been retired.</strong> <?php echo $aiem_repl ? esc_html( 'Requests fall back to ' . $aiem_repl . '. ' ) : ''; ?>Choose a current model above.</p>
+							<?php elseif ( in_array( $aiem_current, [ 'gpt-4o', 'gpt-4o-mini' ], true ) ) : ?>
+								<p class="description">OpenAI retires this model on January 14, 2027. After that, requests fall back to <?php echo esc_html( AIEM_OpenAI::replacement_for( $aiem_current ) ); ?>. Switching sooner lets you check the results yourself.</p>
+							<?php endif; ?>
 						</td>
 					</tr>
 					<tr>
 						<th>Max Output Tokens</th>
 						<td>
 							<input type="number" name="aiem_max_tokens" value="<?php echo (int) get_option( 'aiem_max_tokens', 2500 ); ?>" min="500" max="8000" class="small-text" />
-							<p class="description">Default: 2500. When generating from a template, this is raised to 4000 automatically if below that.</p>
+							<p class="description">Default: 2500. Limits the length of the written email. When generating from a template, this is raised to 4000 automatically if below that. Current models also "think" before writing; room for that is added automatically on top of this number.</p>
 						</td>
 					</tr>
 					<tr>
@@ -2024,7 +2039,7 @@ class AIEM_Admin {
 
 		$options = [
 			'aiem_openai_key'       => sanitize_text_field( wp_unslash( $_POST['aiem_openai_key'] ?? '' ) ),
-			'aiem_openai_model'     => sanitize_text_field( wp_unslash( $_POST['aiem_openai_model'] ?? 'gpt-4o' ) ),
+			'aiem_openai_model'     => sanitize_text_field( wp_unslash( $_POST['aiem_openai_model'] ?? AIEM_OpenAI::DEFAULT_MODEL ) ),
 			'aiem_max_tokens'              => max( 500, min( 8000, (int) ( $_POST['aiem_max_tokens'] ?? 2500 ) ) ),
 			'aiem_system_prompt'           => sanitize_textarea_field( wp_unslash( $_POST['aiem_system_prompt'] ?? '' ) ),
 			'aiem_template_system_prompt'  => sanitize_textarea_field( wp_unslash( $_POST['aiem_template_system_prompt'] ?? '' ) ),
@@ -2106,7 +2121,7 @@ class AIEM_Admin {
 				<p>Under <strong>Settings → OpenAI</strong>, paste your API key. This unlocks AI-generated subject lines, preview text, and email body copy when you create or edit a campaign. Without a key the plugin still works — you just write copy manually.</p>
 				<ul style="list-style:disc;margin-left:1.5em">
 					<li>Get a key at <strong>platform.openai.com → API keys</strong>.</li>
-					<li>Default model is <code>gpt-4o</code>; switch to <code>gpt-4o-mini</code> for lower cost.</li>
+					<li>Default model is <code>gpt-6.1-sol</code>; switch to <code>gpt-6.1-terra</code> or <code>gpt-6-luna</code> for lower cost.</li>
 				</ul>
 				<p><strong>System Prompt vs. Campaign Prompt — what's the difference?</strong></p>
 				<p>There are two separate inputs that shape what the AI writes:</p>
