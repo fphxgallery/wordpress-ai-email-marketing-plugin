@@ -899,4 +899,54 @@ jQuery(function ($) {
 			}
 		});
 	});
+	// ── Settings → Sending: live pace estimate ─────────────────────────────
+	(function () {
+		var $pace = $('#aiem-pace');
+		if (!$pace.length) { return; }
+		var measured = parseFloat($pace.data('avg')) || 0;
+		var avg      = measured > 0 ? measured : 1.5;
+		var budget   = parseInt($pace.data('budget'), 10) || 20;
+		var list     = parseInt($pace.data('list'), 10) || 0;
+
+		function dur(sec) {
+			if (sec < 60) { return Math.round(sec) + ' s'; }
+			if (sec < 3600) { return Math.round(sec / 60) + ' min'; }
+			var h = sec / 3600;
+			return (h < 10 ? h.toFixed(1).replace(/\.0$/, '') : Math.round(h)) + ' h';
+		}
+		function item(value, label) {
+			var $d = $('<div class="aiem-pace-item"></div>');
+			$('<strong></strong>').text(value).appendTo($d);
+			$('<span></span>').text(label).appendTo($d);
+			return $d;
+		}
+		function update() {
+			var batch  = Math.max(1, parseInt($('#aiem-batch-size').val(), 10) || 1);
+			var delay  = Math.max(1, parseInt($('#aiem-batch-delay').val(), 10) || 1);
+			var hourly = Math.max(0, parseInt($('#aiem-hourly-limit').val(), 10) || 0);
+
+			$('#aiem-batch-delay-human').text(delay >= 60 ? '= ' + dur(delay) : '');
+
+			var perBatch = Math.max(1, Math.min(batch, Math.floor(budget / avg)));
+			if (hourly) { perBatch = Math.min(perBatch, hourly); }
+			var cycle   = delay + perBatch * avg;
+			var perHour = (3600 / cycle) * perBatch;
+			var capped  = hourly && perHour > hourly;
+			if (capped) { perHour = hourly; }
+
+			$pace.empty()
+				.append(item('~' + perBatch, perBatch < batch ? 'per batch (time limit)' : 'per batch'))
+				.append(item('~' + Math.round(perHour).toLocaleString(), capped ? 'per hour (your cap)' : 'per hour'));
+			if (list) {
+				$pace.append(item(dur((list / perHour) * 3600), 'for ' + list.toLocaleString() + ' subscribers'));
+			}
+			if (perBatch < batch) {
+				$('<div class="aiem-pace-note"></div>')
+					.text('Batches stop after ' + budget + ' s, so only about ' + perBatch + ' of ' + batch + ' go out per batch at this mail server speed.')
+					.appendTo($pace);
+			}
+		}
+		$('#aiem-batch-size, #aiem-batch-delay, #aiem-hourly-limit').on('input change', update);
+		update();
+	})();
 });

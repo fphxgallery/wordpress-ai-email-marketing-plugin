@@ -72,6 +72,71 @@ class AIEM_Sender {
 		);
 	}
 
+	const FAIL_STREAK_LIMIT = 3;
+	const BACKOFF_FIRST     = 15 * MINUTE_IN_SECONDS;
+	const BACKOFF_MAX       = 4 * HOUR_IN_SECONDS;
+
+	/**
+	 * True when the mail server refused for a reason that has nothing to do
+	 * with the recipient and should clear up later: rate or daily limits,
+	 * "try again later" (4xx) replies, connection or login trouble.
+	 */
+	public static function is_temporary_failure( string $error_msg ): bool {
+		if ( $error_msg === '' || self::is_hard_bounce( $error_msg ) ) {
+			return false;
+		}
+		if ( preg_match( '/\b4\.\d\.\d{1,3}\b/', $error_msg ) || preg_match( '/(^|[^0-9.])4[2-5]\d([^0-9.]|$)/', $error_msg ) ) {
+			return true;
+		}
+		return (bool) preg_match(
+			'/rate.?limit|too many|limit (exceeded|reached)|exceeded|quota|throttl|try (again )?later|temporar|could not connect|connect\(\) failed|connection (refused|timed out|reset)|timed? ?out|could not authenticate|authentication (failed|unsuccessful)|\b535\b/i',
+			$error_msg
+		);
+	}
+
+	/** Seconds a batch may spend sending, kept under PHP's time limit. */
+	public static function batch_time_budget(): int {
+		$limit = (int) ini_get( 'max_execution_time' );
+		if ( $limit <= 0 ) {
+			return 50;
+		}
+		return max( 20, min( 50, $limit - 10 ) );
+	}
+
+	/** Rolling average of seconds per email, for the pace estimate. */
+	private static function record_send_speed( float $seconds ): void {
+		$prev = (float) get_option( 'aiem_avg_send_seconds', 0 );
+		$avg  = $prev > 0 ? ( $prev * 0.7 + $seconds * 0.3 ) : $seconds;
+		update_option( 'aiem_avg_send_seconds', round( $avg, 3 ), false );
+	}
+
+	/** Replace any queued batch for this campaign with one $delay seconds out. */
+	public static function schedule_next_batch( int $campaign_id, int $delay ): void {
+		wp_clear_scheduled_hook( 'aiem_process_batch', [ $campaign_id ] );
+		wp_schedule_single_event( time() + max( 1, $delay ), 'aiem_process_batch', [ $campaign_id ] );
+	}
+
+	public static function get_backoff( int $campaign_id ): ?array {
+		$b = get_option( 'aiem_backoff_' . $campaign_id );
+		return is_array( $b ) ? $b : null;
+	}
+
+	/** Start or extend a back-off: 15 min, doubling each time, capped at 4 h. */
+	private static function start_backoff( int $campaign_id, string $error, ?array $prev ): int {
+		$step = $prev ? (int) $prev['step'] + 1 : 0;
+		$wait = (int) min( self::BACKOFF_MAX, self::BACKOFF_FIRST * ( 2 ** $step ) );
+		update_option( 'aiem_backoff_' . $campaign_id, [
+			'until' => time() + $wait,
+			'step'  => $step,
+			'error' => mb_substr( $error, 0, 300 ),
+		], false );
+		return $wait;
+	}
+
+	public static function clear_backoff( int $campaign_id ): void {
+		delete_option( 'aiem_backoff_' . $campaign_id );
+	}
+
 	public static function enqueue_sends( int $campaign_id ): int {
 		$campaign = AIEM_DB::get_campaign( $campaign_id );
 		if ( ! $campaign ) {
@@ -109,7 +174,33 @@ class AIEM_Sender {
 			return false;
 		}
 
+		// Backing off after the mail server refused mail: wait it out.
+		$backoff = self::get_backoff( $campaign_id );
+		if ( $backoff && $backoff['until'] > time() ) {
+			self::schedule_next_batch( $campaign_id, $backoff['until'] - time() );
+			return true;
+		}
+
 		$batch_size = max( 1, (int) get_option( 'aiem_batch_size', 50 ) );
+
+		// Hourly cap across all campaign mail.
+		$hourly_limit = max( 0, (int) get_option( 'aiem_hourly_limit', 0 ) );
+		if ( $hourly_limit ) {
+			$room = $hourly_limit - AIEM_DB::count_sent_last_hour();
+			if ( $room <= 0 ) {
+				$wait = AIEM_DB::seconds_until_hourly_room();
+				self::schedule_next_batch( $campaign_id, $wait );
+				AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
+					'campaign_id'  => $campaign_id,
+					'action'       => 'hourly_limit_reached',
+					'hourly_limit' => $hourly_limit,
+					'resume_in'    => $wait,
+				] );
+				return true;
+			}
+			$batch_size = min( $batch_size, $room );
+		}
+
 		$sends = AIEM_DB::get_pending_sends( $campaign_id, $batch_size );
 
 		AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
@@ -118,9 +209,13 @@ class AIEM_Sender {
 			'pending'     => count( $sends ),
 		] );
 
-		// Stop well before PHP's time limit so the "schedule next batch" step
+		// Stop before PHP's time limit so the "schedule next batch" step
 		// below always gets to run. Unsent rows stay pending for the next batch.
-		$deadline = microtime( true ) + 20;
+		$started     = microtime( true );
+		$deadline    = $started + self::batch_time_budget();
+		$sent_count  = 0;
+		$fail_streak = [];     // consecutive non-bounce failures: send ids
+		$refused     = '';     // set when the server refused mail; stops the batch
 
 		foreach ( $sends as $send ) {
 			if ( microtime( true ) > $deadline ) {
@@ -140,7 +235,9 @@ class AIEM_Sender {
 			self::$current_send_id = 0;
 
 			if ( $sent ) {
-				AIEM_DB::update_send( (int) $send->id, [ 'status' => 'sent', 'sent_at' => current_time( 'mysql' ) ] );
+				$sent_count++;
+				$fail_streak = [];
+				AIEM_DB::update_send( (int) $send->id, [ 'status' => 'sent', 'sent_at' => current_time( 'mysql' ), 'bounce_error' => null ] );
 				AIEM_DB::reset_bounce_count( (int) $send->subscriber_id );
 				AIEM_Logs::log( AIEM_Logs::EVENT_SEND, [
 					'subscriber_id' => $send->subscriber_id,
@@ -150,8 +247,17 @@ class AIEM_Sender {
 				] );
 			} else {
 				$fresh = AIEM_DB::get_send( (int) $send->id );
+				$error = (string) ( $fresh->bounce_error ?? '' );
 				if ( $fresh && $fresh->status === 'bounced' ) {
-					// already handled by handle_mail_failed
+					// Hard bounce, already handled by handle_mail_failed. The
+					// address was bad, not the server, so the streak resets.
+					$fail_streak = [];
+				} elseif ( self::is_temporary_failure( $error ) ) {
+					// Rate limit, quota, connection or login problem: nothing
+					// wrong with this subscriber. Put it back and stop.
+					AIEM_DB::update_send( (int) $send->id, [ 'status' => 'pending', 'sent_at' => null ] );
+					$refused = $error;
+					break;
 				} else {
 					AIEM_DB::update_send( (int) $send->id, [ 'status' => 'failed', 'sent_at' => current_time( 'mysql' ) ] );
 					AIEM_Logs::log( AIEM_Logs::EVENT_SEND_FAILED, [
@@ -159,17 +265,50 @@ class AIEM_Sender {
 						'campaign_id'   => $campaign_id,
 						'send_id'       => $send->id,
 						'email'         => $send->email,
-						'error'         => $fresh->bounce_error ?? '',
+						'error'         => $error,
 					] );
+					// Several different addresses failing in a row for reasons
+					// other than a bad address means the server is the problem.
+					$fail_streak[] = (int) $send->id;
+					if ( count( $fail_streak ) >= self::FAIL_STREAK_LIMIT ) {
+						foreach ( $fail_streak as $sid ) {
+							AIEM_DB::update_send( $sid, [ 'status' => 'pending', 'sent_at' => null ] );
+						}
+						$refused = $error ?: 'Several sends failed in a row.';
+						break;
+					}
 				}
 			}
+		}
+
+		if ( $sent_count ) {
+			self::record_send_speed( ( microtime( true ) - $started ) / $sent_count );
+			if ( $backoff ) {
+				self::clear_backoff( $campaign_id );
+				AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
+					'campaign_id' => $campaign_id,
+					'action'      => 'resumed_after_backoff',
+				] );
+			}
+		}
+
+		if ( $refused !== '' ) {
+			$wait = self::start_backoff( $campaign_id, $refused, $backoff );
+			self::schedule_next_batch( $campaign_id, $wait );
+			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
+				'campaign_id' => $campaign_id,
+				'action'      => 'server_refused_backing_off',
+				'error'       => $refused,
+				'retry_in'    => $wait,
+			] );
+			return true;
 		}
 
 		$remaining = count( AIEM_DB::get_pending_sends( $campaign_id, 1 ) );
 
 		if ( $remaining > 0 ) {
 			$delay = max( 1, (int) get_option( 'aiem_batch_delay', 5 ) );
-			wp_schedule_single_event( time() + $delay, 'aiem_process_batch', [ $campaign_id ] );
+			self::schedule_next_batch( $campaign_id, $delay );
 			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
 				'campaign_id' => $campaign_id,
 				'action'      => 'next_batch_scheduled',
@@ -183,6 +322,7 @@ class AIEM_Sender {
 				'action'      => 'waiting_on_other_batch',
 			] );
 		} elseif ( AIEM_DB::complete_campaign( $campaign_id ) ) {
+			self::clear_backoff( $campaign_id );
 			// complete_campaign() is atomic, so these run exactly once.
 			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
 				'campaign_id' => $campaign_id,

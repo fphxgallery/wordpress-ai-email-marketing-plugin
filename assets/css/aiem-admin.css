@@ -326,3 +326,10 @@
 .aiem-gdpr-row         { margin-bottom: 8px; }
 .aiem-gdpr-label       { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: #374151; cursor: pointer; }
 .aiem-gdpr-label input { margin-top: 2px; flex-shrink: 0; }
+
+/* Settings → Sending: pace estimate */
+.aiem-pace { display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 10px 14px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; max-width: 640px; }
+.aiem-pace-item { display: flex; flex-direction: column; min-width: 120px; }
+.aiem-pace-item strong { font-size: 16px; color: #1d2327; font-variant-numeric: tabular-nums; }
+.aiem-pace-item span { font-size: 12px; color: #6b7280; }
+.aiem-pace-note { flex-basis: 100%; font-size: 12px; color: #6b7280; }

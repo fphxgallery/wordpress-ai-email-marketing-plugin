@@ -1780,19 +1780,60 @@ class AIEM_Admin {
 				</table>
 
 				<h2 class="title">Sending</h2>
+				<?php
+				$aiem_avg      = (float) get_option( 'aiem_avg_send_seconds', 0 );
+				$aiem_list_max = AIEM_DB::largest_list_size();
+				$aiem_hour_n   = AIEM_DB::count_sent_last_hour();
+				$aiem_backoffs = [];
+				foreach ( AIEM_DB::get_sending_campaigns() as $aiem_c ) {
+					$aiem_b = AIEM_Sender::get_backoff( (int) $aiem_c->id );
+					if ( $aiem_b && $aiem_b['until'] > time() ) {
+						$aiem_backoffs[] = [ $aiem_c, $aiem_b ];
+					}
+				}
+				?>
 				<table class="form-table">
 					<tr>
 						<th>Batch size</th>
 						<td>
-							<input type="number" name="aiem_batch_size" value="<?php echo (int) get_option( 'aiem_batch_size', 50 ); ?>" min="1" max="500" class="small-text" />
-							<p class="description">Emails sent per batch. Lower = less server load; higher = faster delivery.</p>
+							<input type="number" id="aiem-batch-size" name="aiem_batch_size" value="<?php echo (int) get_option( 'aiem_batch_size', 50 ); ?>" min="1" max="500" class="small-text" />
+							<p class="description">Most emails sent per batch. A batch also stops after <?php echo (int) AIEM_Sender::batch_time_budget(); ?> seconds (your server's time limit), so on a slow mail server fewer may go out.</p>
 						</td>
 					</tr>
 					<tr>
 						<th>Delay between batches</th>
 						<td>
-							<input type="number" name="aiem_batch_delay" value="<?php echo (int) get_option( 'aiem_batch_delay', 5 ); ?>" min="1" max="300" class="small-text" /> seconds
-							<p class="description">Pause between batches. Increase if your host throttles outgoing mail.</p>
+							<input type="number" id="aiem-batch-delay" name="aiem_batch_delay" value="<?php echo (int) get_option( 'aiem_batch_delay', 5 ); ?>" min="1" max="3600" class="small-text" /> seconds
+							<span id="aiem-batch-delay-human" class="aiem-muted"></span>
+							<p class="description">Pause between batches, up to 3600 (1 hour). Example: 600 = every 10 minutes.</p>
+						</td>
+					</tr>
+					<tr>
+						<th>Max emails per hour</th>
+						<td>
+							<input type="number" id="aiem-hourly-limit" name="aiem_hourly_limit" value="<?php echo (int) get_option( 'aiem_hourly_limit', 0 ); ?>" min="0" max="100000" class="small-text" />
+							<p class="description">0 = no limit. Counts campaign emails sent in the last 60 minutes; when the limit is reached, sending waits until there is room. Sent in the last hour: <strong><?php echo (int) $aiem_hour_n; ?></strong>.</p>
+						</td>
+					</tr>
+					<tr>
+						<th>Estimated pace</th>
+						<td>
+							<div id="aiem-pace" class="aiem-pace"
+								data-avg="<?php echo esc_attr( $aiem_avg ); ?>"
+								data-budget="<?php echo (int) AIEM_Sender::batch_time_budget(); ?>"
+								data-list="<?php echo (int) $aiem_list_max; ?>"></div>
+							<p class="description">Based on <?php echo $aiem_avg > 0 ? esc_html( sprintf( 'your mail server averaging %.1f s per email', $aiem_avg ) ) : 'an assumed 1.5 s per email (no campaign sent yet)'; ?>. WordPress cron only runs when the site gets visits, so real delays can be longer on a quiet site.</p>
+						</td>
+					</tr>
+					<tr>
+						<th>If the mail server refuses</th>
+						<td>
+							<p class="description" style="margin-top:0">Rate-limit, quota, "try again later", connection and login errors don't mark subscribers failed. The email goes back in the queue and the campaign waits 15 minutes, doubling up to 4 hours between tries, until the server accepts mail again. Three non-bounce failures in a row are treated the same way.</p>
+							<?php foreach ( $aiem_backoffs as [ $aiem_c, $aiem_b ] ) : ?>
+								<div class="notice notice-warning inline" style="margin:8px 0 0">
+									<p><strong><?php echo esc_html( $aiem_c->name ); ?></strong> is waiting until <?php echo esc_html( wp_date( get_option( 'time_format' ), (int) $aiem_b['until'] ) ); ?>. Server said: <code><?php echo esc_html( $aiem_b['error'] ); ?></code></p>
+								</div>
+							<?php endforeach; ?>
 						</td>
 					</tr>
 				</table>
@@ -2050,7 +2091,8 @@ class AIEM_Admin {
 			'aiem_double_optin'     => isset( $_POST['aiem_double_optin'] ) ? '1' : '0',
 			'aiem_bounce_threshold' => max( 1, (int) ( $_POST['aiem_bounce_threshold'] ?? 3 ) ),
 			'aiem_batch_size'       => max( 1, min( 500, (int) ( $_POST['aiem_batch_size'] ?? 50 ) ) ),
-			'aiem_batch_delay'      => max( 1, min( 300, (int) ( $_POST['aiem_batch_delay'] ?? 5 ) ) ),
+			'aiem_batch_delay'      => max( 1, min( 3600, (int) ( $_POST['aiem_batch_delay'] ?? 5 ) ) ),
+			'aiem_hourly_limit'     => max( 0, min( 100000, (int) ( $_POST['aiem_hourly_limit'] ?? 0 ) ) ),
 			'aiem_log_retention_days'  => max( 0, min( 3650, (int) ( $_POST['aiem_log_retention_days'] ?? 90 ) ) ),
 			'aiem_delete_on_uninstall' => isset( $_POST['aiem_delete_on_uninstall'] ) ? '1' : '0',
 			'aiem_woo_categories'   => wp_json_encode( $woo_cats_raw ),

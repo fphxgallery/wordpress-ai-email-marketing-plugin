@@ -857,6 +857,46 @@ class AIEM_DB {
 		);
 	}
 
+	/**
+	 * Campaign emails sent (or being sent) in the last 60 minutes, across all
+	 * campaigns. sent_at is site-local time, like claim_send() writes it.
+	 */
+	public static function count_sent_last_hour(): int {
+		global $wpdb;
+		$cutoff = wp_date( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS );
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$wpdb->prefix}aiem_sends WHERE status IN ('sent','sending') AND sent_at >= %s",
+				$cutoff
+			)
+		);
+	}
+
+	/** Seconds until the oldest send in the hourly window drops out of it. */
+	public static function seconds_until_hourly_room(): int {
+		global $wpdb;
+		$cutoff = wp_date( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS );
+		$oldest = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT MIN(sent_at) FROM {$wpdb->prefix}aiem_sends WHERE status IN ('sent','sending') AND sent_at >= %s",
+				$cutoff
+			)
+		);
+		if ( ! $oldest ) {
+			return 60;
+		}
+		$ts = ( new DateTimeImmutable( $oldest, wp_timezone() ) )->getTimestamp();
+		return max( 60, $ts + HOUR_IN_SECONDS - time() + 5 );
+	}
+
+	/** Subscribed count of the biggest list, for the sending pace estimate. */
+	public static function largest_list_size(): int {
+		global $wpdb;
+		return (int) $wpdb->get_var(
+			"SELECT MAX(c) FROM (SELECT COUNT(*) AS c FROM {$wpdb->prefix}aiem_subscribers WHERE status = 'subscribed' GROUP BY list_id) t"
+		);
+	}
+
 	public static function count_sends_in_progress( int $campaign_id ): int {
 		global $wpdb;
 		return (int) $wpdb->get_var(
