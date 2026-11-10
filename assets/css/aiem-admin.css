@@ -13,15 +13,23 @@
 @media (min-width: 783px) {
 	.aiem-wrap:not(.aiem-ee) > h1 { position: sticky; top: 32px; z-index: 20; }
 }
-.aiem-wrap > h1 .page-title-action,
+/* .wrap.aiem-wrap + state selectors out-rank core's ".wrap .page-title-action:active",
+   which sets margin-left:4px/top:-3px — the button jumped left on mousedown and the click was lost. */
+.wrap.aiem-wrap > h1 .page-title-action,
+.wrap.aiem-wrap > h1 .page-title-action:active,
+.wrap.aiem-wrap > h1 .page-title-action:focus,
 .aiem-wrap > h1 > .button {
 	position: static; top: auto; margin: 0 0 0 auto;
 	font-size: 13px; font-weight: 400;
 }
-.aiem-wrap > h1 .page-title-action {
+.wrap.aiem-wrap > h1 .page-title-action,
+.wrap.aiem-wrap > h1 .page-title-action:active,
+.wrap.aiem-wrap > h1 .page-title-action:focus {
 	background: #2271b1; border-color: #2271b1; color: #fff; border-radius: 3px; padding: 0 12px; min-height: 30px; line-height: 28px;
 }
-.aiem-wrap > h1 .page-title-action:hover { background: #135e96; border-color: #135e96; color: #fff; }
+.wrap.aiem-wrap > h1 .page-title-action:hover,
+.wrap.aiem-wrap > h1 .page-title-action:active { background: #135e96; border-color: #135e96; color: #fff; }
+.wrap.aiem-wrap > h1 .page-title-action:focus { box-shadow: 0 0 0 1px #fff, 0 0 0 3px #2271b1; outline: 2px solid transparent; }
 .aiem-back { font-size: 13px; font-weight: 400; text-decoration: none; white-space: nowrap; padding-right: 10px; border-right: 1px solid #dcdcde; }
 .aiem-h1-meta { font-size: 13px; font-weight: 400; color: #6b7280; }
 #aiem-process-queue-result { font-size: 13px; font-weight: 400; color: #4b5563; }

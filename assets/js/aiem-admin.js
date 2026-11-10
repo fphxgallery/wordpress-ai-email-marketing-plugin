@@ -718,7 +718,11 @@ jQuery(function ($) {
 						);
 					}
 				}
-				setTimeout(function () { location.reload(); }, 1000);
+				// A new form must reload onto its own edit URL, or the page comes back blank as "New Form".
+				var target = (!formId && res.data.form_id)
+					? location.pathname + '?page=aiem-form-edit&form_id=' + parseInt(res.data.form_id, 10)
+					: location.href;
+				setTimeout(function () { location.href = target; }, 1000);
 			} else {
 				$result.css('color', '#dc2626').text(res.data.message);
 			}
