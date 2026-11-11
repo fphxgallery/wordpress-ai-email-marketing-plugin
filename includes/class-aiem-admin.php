@@ -1160,7 +1160,7 @@ class AIEM_Admin {
 						?>
 							<label class="aiem-checkbox">
 								<input type="checkbox" id="aiem-use-woo" checked />
-								Include WooCommerce products (last <?php echo (int) get_option( 'aiem_product_count', 5 ); ?>)
+								Include WooCommerce products (up to <?php echo (int) get_option( 'aiem_product_count', 5 ); ?>; upcoming events by date first, past events skipped)
 							</label>
 							<div id="aiem-woo-filters" style="margin-top:10px;padding:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;display:flex;gap:24px;flex-wrap:wrap;">
 								<?php if ( $woo_cats ) : ?>

@@ -188,7 +188,8 @@ class AIEM_OpenAI {
 		// Added to every prompt, including custom ones saved in Settings.
 		$system_prompt = $body_instructions . "\n\n"
 			. 'Context: today is ' . wp_date( 'l, F j, Y' ) . '. The sender is ' . get_bloginfo( 'name' ) . ' (' . home_url( '/' ) . '). '
-			. "Only use prices, dates, offers and URLs that appear in the brief or the product list; never invent them.\n\n"
+			. 'Only use prices, dates, offers and URLs that appear in the brief or the product list; never invent them. '
+			. "For ticket or buy buttons, link to a product's \"Buy tickets\" URL when it has one, otherwise its product page.\n\n"
 			. "Always respond with a single JSON object (no markdown, no code fences) containing exactly three keys:\n"
 			. "  \"subject\"      — a compelling email subject line (under 60 characters)\n"
 			. "  \"preview_text\" — inbox preview text that complements the subject (under 100 characters)\n"
@@ -201,16 +202,18 @@ class AIEM_OpenAI {
 		}
 
 		if ( ! empty( $products ) ) {
-			$user_content .= "\n\nFeatured products to highlight:\n";
+			$user_content .= "\n\nFeatured products to highlight (events are listed soonest first):\n";
 			foreach ( $products as $p ) {
-				$user_content .= sprintf(
-					"\n- **%s** — %s\n  Description: %s\n  URL: %s\n  Image: %s\n",
-					$p['name'],
-					$p['price'],
-					$p['description'] ?: '(no description)',
-					$p['url'],
-					$p['image'] ?: '(no image)'
-				);
+				$user_content .= "\n- **" . $p['name'] . '**' . ( ( $p['price'] ?? '' ) !== '' ? ' — ' . $p['price'] : '' ) . "\n";
+				if ( ! empty( $p['event_date'] ) ) {
+					$user_content .= '  Event date: ' . $p['event_date'] . "\n";
+				}
+				$user_content .= '  Description: ' . ( $p['description'] ?: '(no description)' ) . "\n";
+				$user_content .= '  Product page: ' . $p['url'] . "\n";
+				if ( ! empty( $p['ticket_url'] ) ) {
+					$user_content .= '  Buy tickets: ' . $p['ticket_url'] . "\n";
+				}
+				$user_content .= '  Image: ' . ( $p['image'] ?: '(no image)' ) . "\n";
 			}
 		}
 
