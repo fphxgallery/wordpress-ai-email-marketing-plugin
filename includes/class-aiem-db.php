@@ -590,7 +590,25 @@ class AIEM_DB {
 
 	public static function delete_subscriber( int $id ): bool {
 		global $wpdb;
-		return (bool) $wpdb->delete( "{$wpdb->prefix}aiem_subscribers", [ 'id' => $id ], [ '%d' ] );
+		$deleted = (bool) $wpdb->delete( "{$wpdb->prefix}aiem_subscribers", [ 'id' => $id ], [ '%d' ] );
+		if ( $deleted ) {
+			self::purge_unsent_for_subscribers( [ $id ] );
+		}
+		return $deleted;
+	}
+
+	/**
+	 * Drop campaign sends and workflow emails still waiting for deleted
+	 * subscribers. Sent history stays so campaign reports keep their numbers.
+	 */
+	private static function purge_unsent_for_subscribers( array $ids ): void {
+		global $wpdb;
+		$ids_str = implode( ',', array_filter( array_map( 'intval', $ids ) ) );
+		if ( '' === $ids_str ) {
+			return;
+		}
+		$wpdb->query( "DELETE FROM {$wpdb->prefix}aiem_sends WHERE subscriber_id IN ({$ids_str}) AND status = 'pending'" );
+		$wpdb->query( "DELETE FROM {$wpdb->prefix}aiem_workflow_queue WHERE subscriber_id IN ({$ids_str}) AND status = 'pending'" );
 	}
 
 	public static function bulk_unsubscribe_subscribers( array $ids ): int {
@@ -610,7 +628,9 @@ class AIEM_DB {
 		}
 		$ids_str = implode( ',', array_map( 'intval', $ids ) );
 		$wpdb->query( "DELETE FROM {$wpdb->prefix}aiem_subscribers WHERE id IN ({$ids_str})" );
-		return (int) $wpdb->rows_affected;
+		$deleted = (int) $wpdb->rows_affected;
+		self::purge_unsent_for_subscribers( $ids );
+		return $deleted;
 	}
 
 	// ── Campaigns ──────────────────────────────────────────────────────────
@@ -695,7 +715,7 @@ class AIEM_DB {
 			'status'       => 'draft',
 			'html_content'   => $data['html_content'] ?? '',
 			'blocks'         => $data['blocks'] ?? '[]',
-			'ai_prompt'      => sanitize_textarea_field( $data['ai_prompt'] ?? '' ),
+			'ai_prompt'      => AIEM_OpenAI::sanitize_prompt( (string) ( $data['ai_prompt'] ?? '' ) ),
 			'from_name'      => sanitize_text_field( $data['from_name'] ?? '' ),
 			'from_email'     => sanitize_email( $data['from_email'] ?? '' ),
 			'recur_schedule'   => sanitize_text_field( $data['recur_schedule'] ?? '' ),
@@ -1193,20 +1213,6 @@ class AIEM_DB {
 				$cutoff
 			)
 		);
-	}
-
-	public static function get_recent_logs( int $limit = 10 ): array {
-		global $wpdb;
-		return $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT l.*, s.email AS subscriber_email, c.name AS campaign_name
-				 FROM {$wpdb->prefix}aiem_logs l
-				 LEFT JOIN {$wpdb->prefix}aiem_subscribers s ON s.id = l.subscriber_id
-				 LEFT JOIN {$wpdb->prefix}aiem_campaigns c ON c.id = l.campaign_id
-				 ORDER BY l.created_at DESC LIMIT %d",
-				$limit
-			)
-		) ?: [];
 	}
 
 	/**

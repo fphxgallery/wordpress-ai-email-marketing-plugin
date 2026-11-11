@@ -53,7 +53,7 @@ class AIEM_Ajax {
 	public function generate_email(): void {
 		$this->verify_admin();
 
-		$prompt      = sanitize_textarea_field( wp_unslash( $_POST['prompt'] ?? '' ) );
+		$prompt      = AIEM_OpenAI::sanitize_prompt( (string) wp_unslash( $_POST['prompt'] ?? '' ) );
 		$use_woo     = ! empty( $_POST['use_woo'] );
 		$campaign_id = (int) ( $_POST['campaign_id'] ?? 0 );
 
@@ -118,7 +118,7 @@ class AIEM_Ajax {
 	public function generate_subject(): void {
 		$this->verify_admin();
 
-		$prompt = sanitize_textarea_field( wp_unslash( $_POST['prompt'] ?? '' ) );
+		$prompt = AIEM_OpenAI::sanitize_prompt( (string) wp_unslash( $_POST['prompt'] ?? '' ) );
 		if ( ! $prompt ) {
 			wp_send_json_error( [ 'message' => 'Prompt is required.' ] );
 		}
@@ -385,7 +385,7 @@ class AIEM_Ajax {
 		$segment_id  = (int) ( $_POST['segment_id'] ?? 0 );
 		$from_name   = sanitize_text_field( wp_unslash( $_POST['from_name'] ?? '' ) );
 		$from_email  = sanitize_email( wp_unslash( $_POST['from_email'] ?? '' ) );
-		$ai_prompt   = sanitize_textarea_field( wp_unslash( $_POST['ai_prompt'] ?? '' ) );
+		$ai_prompt   = AIEM_OpenAI::sanitize_prompt( (string) wp_unslash( $_POST['ai_prompt'] ?? '' ) );
 		$blocks_raw  = wp_unslash( $_POST['blocks'] ?? '[]' );
 		$blocks_arr  = json_decode( $blocks_raw, true );
 		$blocks      = is_array( $blocks_arr ) ? wp_json_encode( $blocks_arr ) : '[]';
