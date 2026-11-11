@@ -83,9 +83,20 @@ jQuery(function ($) {
 			return;
 		}
 
+		var $tpl     = $('#aiem-load-template');
+		var tplId    = $tpl.val() || 0;
+		var tplName  = tplId ? $.trim($tpl.find(':selected').text()) : '';
+		var current  = $.trim($('#aiem-html-content').val());
+		if (current) {
+			var msg = tplId
+				? 'Fill the "' + tplName + '" layout in the HTML box with new AI content?\n\nYour layout and styles are kept; the text, images and links are replaced.'
+				: 'No template is selected, so the AI will design its own layout and REPLACE everything in the HTML box.\n\nTo keep your design, pick it under "Load from Email Editor" first.\n\nContinue?';
+			if (!confirm(msg)) { return; }
+		}
+
 		$('#aiem-generate-btn').prop('disabled', true);
 		$('#aiem-generate-spinner').show();
-		$('#aiem-generate-status').text('Generating…');
+		$('#aiem-generate-status').text(tplId ? 'Filling "' + tplName + '"…' : 'Generating…');
 
 		$.post(aiemAdmin.ajaxUrl, {
 			action:           'aiem_generate_email',
@@ -95,7 +106,8 @@ jQuery(function ($) {
 			campaign_id:      campaignId,
 			woo_category_ids: JSON.stringify($('#aiem-woo-category-ids').val() || []),
 			woo_tag_ids:      JSON.stringify($('#aiem-woo-tag-ids').val() || []),
-			template_id:      $('#aiem-load-template').val() || 0,
+			template_id:      tplId,
+			base_html:        tplId ? current : '',
 		}, function (res) {
 			$('#aiem-generate-btn').prop('disabled', false);
 			$('#aiem-generate-spinner').hide();
@@ -104,7 +116,9 @@ jQuery(function ($) {
 				$('#aiem-html-content').val(res.data.html);
 				if (res.data.subject)      { $('#aiem-subject').val(res.data.subject); }
 				if (res.data.preview_text) { $('#aiem-preheader').val(res.data.preview_text); }
-				$('#aiem-generate-status').text('Subject, preview text, and content generated. Review and edit below.');
+				$('#aiem-generate-status').text(tplId
+					? 'Filled "' + tplName + '" — subject, preview text and content generated. Review below.'
+					: 'Subject, preview text and content generated (AI layout). Review below.');
 				// Show HTML so user sees generated content
 				if ($('#aiem-tab-html').length) { switchToHtml(); }
 			} else {

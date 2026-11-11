@@ -80,7 +80,12 @@ class AIEM_Ajax {
 
 		$template_html = '';
 		$template_id   = (int) ( $_POST['template_id'] ?? 0 );
-		if ( $template_id ) {
+		// The HTML currently in the campaign editor (the loaded template plus
+		// any edits) takes priority over the saved template.
+		$base_html = trim( (string) wp_unslash( $_POST['base_html'] ?? '' ) );
+		if ( $template_id && $base_html !== '' ) {
+			$template_html = $base_html;
+		} elseif ( $template_id ) {
 			$tpl = AIEM_DB::get_email_template( $template_id );
 			if ( $tpl && ! empty( $tpl->html_content ) ) {
 				$template_html = $tpl->html_content;

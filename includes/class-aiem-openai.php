@@ -219,14 +219,55 @@ class AIEM_OpenAI {
 			$max_output = max( 4000, $max_output );
 		}
 
-		$result = self::chat(
-			[
-				[ 'role' => 'system', 'content' => $system_prompt ],
-				[ 'role' => 'user',   'content' => $user_content ],
-			],
-			$max_output,
-			0.7
-		);
+		$messages = [
+			[ 'role' => 'system', 'content' => $system_prompt ],
+			[ 'role' => 'user',   'content' => $user_content ],
+		];
+		$parsed = self::parse_email_response( self::chat( $messages, $max_output, 0.7 ) );
+
+		// With a template, the model must keep the layout. If it rebuilt the
+		// email instead, ask once more; never hand back a different design.
+		if ( $template_html && is_array( $parsed ) && ! self::template_kept( $template_html, $parsed['html'] ) ) {
+			$messages[] = [ 'role' => 'assistant', 'content' => wp_json_encode( $parsed ) ];
+			$messages[] = [ 'role' => 'user', 'content' => 'Your html changed the template\'s tags and style attributes. Start again from the template I gave you: copy it exactly, changing only text between tags, img src/alt and link href. Return the same JSON object.' ];
+			$parsed = self::parse_email_response( self::chat( $messages, $max_output, 0.4 ) );
+			if ( is_array( $parsed ) && ! self::template_kept( $template_html, $parsed['html'] ) ) {
+				return new WP_Error( 'ai_template_changed', 'The AI did not keep your template\'s layout, so nothing was replaced. Try Generate again, or simplify the brief.' );
+			}
+		}
+
+		return $parsed;
+	}
+
+	/**
+	 * True when the generated HTML still uses (most of) the template's
+	 * styling. Compares the template's distinct inline style values; a model
+	 * that rebuilt the email from scratch loses nearly all of them.
+	 */
+	public static function template_kept( string $template_html, string $html ): bool {
+		$styles = function ( string $h ): array {
+			preg_match_all( '/\bstyle\s*=\s*("([^"]*)"|\'([^\']*)\')/i', $h, $m, PREG_SET_ORDER );
+			$out = [];
+			foreach ( $m as $x ) {
+				$v = html_entity_decode( $x[2] !== '' ? $x[2] : ( $x[3] ?? '' ), ENT_QUOTES );
+				$v = strtolower( preg_replace( [ '/\s*([:;,])\s*/', '/\s+/', '/;$/' ], [ '$1', ' ', '' ], trim( $v ) ) );
+				if ( $v !== '' ) {
+					$out[ $v ] = true;
+				}
+			}
+			return $out;
+		};
+		$want = $styles( $template_html );
+		if ( count( $want ) < 3 ) {
+			return true; // too little styling to judge
+		}
+		$have = $styles( $html );
+		$kept = count( array_intersect_key( $want, $have ) );
+		return $kept / count( $want ) >= 0.6;
+	}
+
+	/** Turn a chat() result into [subject, preview_text, html] or WP_Error. */
+	private static function parse_email_response( array|WP_Error $result ): array|WP_Error {
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
