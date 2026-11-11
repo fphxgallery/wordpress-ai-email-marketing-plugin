@@ -344,3 +344,4 @@ a.aiem-pager-btn:focus { box-shadow: 0 0 0 2px #2271b1; outline: 2px solid trans
 .aiem-pace-item strong { font-size: 16px; color: #1d2327; font-variant-numeric: tabular-nums; }
 .aiem-pace-item span { font-size: 12px; color: #6b7280; }
 .aiem-pace-note { flex-basis: 100%; font-size: 12px; color: #6b7280; }
+.aiem-activity-detail span[title] { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }

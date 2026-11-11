@@ -1209,6 +1209,79 @@ class AIEM_DB {
 		) ?: [];
 	}
 
+	/**
+	 * Dashboard activity feed: things a person would want to notice. Leaves
+	 * out per-recipient sends/opens/clicks (the chart covers those) and the
+	 * cron/queue bookkeeping. Finished campaigns are mixed in as one row each.
+	 * Each item: type, ts (unix), email, subscriber_id, campaign_id, name, detail.
+	 */
+	public static function get_activity_feed( int $limit = 8 ): array {
+		global $wpdb;
+		// Successful confirmation/workflow emails are routine (one per signup);
+		// only their failures are listed.
+		$events = [ 'subscribe', 'confirm', 'unsubscribe', 'bounce', 'send_failed', 'workflow_failed' ];
+		$in     = implode( ',', array_fill( 0, count( $events ), '%s' ) );
+		$logs   = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT l.event_type, l.subscriber_id, l.campaign_id, l.details, l.created_at,
+				        s.email AS subscriber_email, c.name AS campaign_name
+				 FROM {$wpdb->prefix}aiem_logs l
+				 LEFT JOIN {$wpdb->prefix}aiem_subscribers s ON s.id = l.subscriber_id
+				 LEFT JOIN {$wpdb->prefix}aiem_campaigns c ON c.id = l.campaign_id
+				 WHERE ( l.event_type IN ($in) OR ( l.event_type = 'confirm_email' AND l.details LIKE %s ) )
+				 ORDER BY l.created_at DESC, l.id DESC LIMIT %d",
+				...array_merge( $events, [ '%' . $wpdb->esc_like( '"error"' ) . '%', $limit ] )
+			)
+		) ?: [];
+
+		$items = [];
+		foreach ( $logs as $log ) {
+			$d    = json_decode( (string) $log->details, true ) ?: [];
+			$type = $log->event_type;
+			if ( 'confirm_email' === $type ) {
+				$type = empty( $d['sent'] ) ? 'confirm_email_failed' : 'confirm_email';
+			}
+			$detail = (string) ( $d['error'] ?? '' );
+			if ( '' === $detail && str_starts_with( $type, 'workflow_' ) ) {
+				$detail = (string) ( $d['workflow_name'] ?? '' );
+			}
+			$items[] = [
+				'type'          => $type,
+				'ts'            => (int) strtotime( $log->created_at . ' UTC' ), // logs are stored in UTC
+				'email'         => (string) ( $log->subscriber_email ?: ( $d['email'] ?? '' ) ),
+				'subscriber_id' => (int) $log->subscriber_id,
+				'campaign_id'   => (int) $log->campaign_id,
+				'name'          => (string) ( $log->campaign_name ?? '' ),
+				'detail'        => $detail,
+			];
+		}
+
+		$campaigns = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT c.id, c.name, c.sent_at,
+				        (SELECT COUNT(*) FROM {$wpdb->prefix}aiem_sends x WHERE x.campaign_id = c.id AND x.status = 'sent') AS sent
+				 FROM {$wpdb->prefix}aiem_campaigns c
+				 WHERE c.status = 'sent' AND c.sent_at IS NOT NULL
+				 ORDER BY c.sent_at DESC LIMIT %d",
+				$limit
+			)
+		) ?: [];
+		foreach ( $campaigns as $c ) {
+			$items[] = [
+				'type'          => 'campaign_sent',
+				'ts'            => (int) strtotime( get_gmt_from_date( $c->sent_at ) . ' UTC' ), // site-local time
+				'email'         => '',
+				'subscriber_id' => 0,
+				'campaign_id'   => (int) $c->id,
+				'name'          => (string) $c->name,
+				'detail'        => sprintf( _n( '%s recipient', '%s recipients', (int) $c->sent, 'ai-email-marketing' ), number_format_i18n( (int) $c->sent ) ),
+			];
+		}
+
+		usort( $items, fn( $a, $b ) => $b['ts'] <=> $a['ts'] );
+		return array_slice( $items, 0, $limit );
+	}
+
 	// ── Segments ───────────────────────────────────────────────────────────
 
 	public static function get_segments( int $list_id = 0 ): array {

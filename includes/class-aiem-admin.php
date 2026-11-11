@@ -89,7 +89,7 @@ class AIEM_Admin {
 		$data   = AIEM_DB::get_dashboard_data( $days );
 		$lists  = AIEM_DB::get_lists();
 		$top    = AIEM_DB::get_top_campaigns( 5 );
-		$recent = AIEM_DB::get_recent_logs( 8 );
+		$recent = AIEM_DB::get_activity_feed( 8 );
 		$cur    = $data['current'];
 		$old    = $data['previous'];
 
@@ -302,14 +302,32 @@ class AIEM_Admin {
 						<p class="aiem-dash-empty">No activity logged yet.</p>
 					<?php else : ?>
 					<table class="aiem-panel-table">
-						<thead><tr><th>Event</th><th>Subscriber</th><th>Campaign</th><th>Time</th></tr></thead>
+						<thead><tr><th>Event</th><th>Who / what</th><th>Details</th><th>When</th></tr></thead>
 						<tbody>
-						<?php foreach ( $recent as $log ) : ?>
+						<?php foreach ( $recent as $item ) : ?>
 							<tr>
-								<td><?php echo $this->event_badge( $log->event_type ); ?></td>
-								<td><?php echo esc_html( $log->subscriber_email ?? '—' ); ?></td>
-								<td><?php echo esc_html( $log->campaign_name ?? '—' ); ?></td>
-								<td class="aiem-muted"><?php echo esc_html( $log->created_at ); ?></td>
+								<td><?php echo $this->event_badge( $item['type'] ); ?></td>
+								<td><?php
+								if ( 'campaign_sent' === $item['type'] ) {
+									echo '<a href="' . esc_url( admin_url( 'admin.php?page=aiem-campaign-edit&campaign_id=' . $item['campaign_id'] ) ) . '">' . esc_html( $item['name'] ?: '(untitled)' ) . '</a>';
+								} elseif ( $item['email'] ) {
+									echo '<a href="' . esc_url( admin_url( 'admin.php?page=aiem-audience&s=' . rawurlencode( $item['email'] ) ) ) . '">' . esc_html( $item['email'] ) . '</a>';
+								} else {
+									echo '—';
+								}
+								?></td>
+								<td class="aiem-activity-detail"><?php
+								$detail = $item['detail'];
+								if ( '' === $detail && $item['name'] ) {
+									$detail = $item['name'];
+								}
+								echo $detail !== '' ? '<span title="' . esc_attr( $detail ) . '">' . esc_html( $detail ) . '</span>' : '<span class="aiem-muted">—</span>';
+								?></td>
+								<td class="aiem-muted" title="<?php echo esc_attr( wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $item['ts'] ) ); ?>"><?php
+								echo esc_html( ( time() - $item['ts'] ) < DAY_IN_SECONDS
+									? sprintf( '%s ago', human_time_diff( $item['ts'] ) )
+									: wp_date( 'M j, g:i a', $item['ts'] ) );
+								?></td>
 							</tr>
 						<?php endforeach; ?>
 						</tbody>
@@ -2156,6 +2174,9 @@ class AIEM_Admin {
 			'workflow_queued'  => [ 'draft',         'WF Queued' ],
 			'workflow_sent'    => [ 'sent',          'WF Sent' ],
 			'workflow_failed'  => [ 'failed',        'WF Failed' ],
+			'confirm_email'        => [ 'scheduled', 'Confirm Email' ],
+			'confirm_email_failed' => [ 'failed',    'Confirm Email Failed' ],
+			'campaign_sent'        => [ 'sending',   'Campaign Sent' ],
 			'cron_check'       => [ 'scheduled',     'Cron Check' ],
 			'cron_batch'       => [ 'sending',       'Cron Batch' ],
 		];

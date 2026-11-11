@@ -73,18 +73,35 @@ class AIEM_WooCommerce {
 	}
 
 	/**
-	 * Event date as a timestamp (site timezone, midnight) or null. Reads
-	 * MM.DD.YYYY, MM-DD-YYYY or MM/DD/YYYY from the product title; the
+	 * Event date as a timestamp (site timezone, midnight) or null. Looks for
+	 * MM.DD.YYYY, MM-DD-YYYY or MM/DD/YYYY in the title first, then the
+	 * short description, then the full description (first date found). The
 	 * aiem_product_event_timestamp filter can supply it from elsewhere.
 	 */
 	public static function event_timestamp( WC_Product $product ): ?int {
 		$ts = null;
-		if ( preg_match( '/\b(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\b/', $product->get_name(), $m )
-			&& checkdate( (int) $m[1], (int) $m[2], (int) $m[3] ) ) {
-			$ts = ( new DateTimeImmutable( sprintf( '%04d-%02d-%02d', $m[3], $m[1], $m[2] ), wp_timezone() ) )->getTimestamp();
+		foreach ( [ $product->get_name(), $product->get_short_description(), $product->get_description() ] as $text ) {
+			// Tags become spaces, so "10.09.2026</p><p>Main" stays separate words.
+			$ts = self::first_date_in( wp_strip_all_tags( preg_replace( '/<[^>]*>/', ' ', (string) $text ) ) );
+			if ( $ts !== null ) {
+				break;
+			}
 		}
 		$ts = apply_filters( 'aiem_product_event_timestamp', $ts, $product );
 		return is_numeric( $ts ) ? (int) $ts : null;
+	}
+
+	/** First valid US-style date (MM.DD.YYYY etc.) in the text, as a timestamp. */
+	private static function first_date_in( string $text ): ?int {
+		if ( ! preg_match_all( '/(?<!\d)(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})(?!\d)/', $text, $all, PREG_SET_ORDER ) ) {
+			return null;
+		}
+		foreach ( $all as $m ) {
+			if ( checkdate( (int) $m[1], (int) $m[2], (int) $m[3] ) ) {
+				return ( new DateTimeImmutable( sprintf( '%04d-%02d-%02d', $m[3], $m[1], $m[2] ), wp_timezone() ) )->getTimestamp();
+			}
+		}
+		return null;
 	}
 
 	private static function product_data( WC_Product $product, ?int $event_ts ): array {
