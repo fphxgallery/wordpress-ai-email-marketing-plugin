@@ -243,6 +243,17 @@ class AIEM_DB {
 			update_option( 'aiem_fix_prompt_tags', 1 );
 		}
 
+		// 1.4.4 replaced the template prompt's multi-product rule, which
+		// copied the header (logo) into every product. An unedited saved copy
+		// of the old default is removed so the new default applies.
+		if ( ! get_option( 'aiem_fix_template_prompt_v2' ) ) {
+			$saved = get_option( 'aiem_template_system_prompt', null );
+			if ( is_string( $saved ) && trim( $saved ) === AIEM_OpenAI::previous_template_prompt() ) {
+				delete_option( 'aiem_template_system_prompt' );
+			}
+			update_option( 'aiem_fix_template_prompt_v2', 1 );
+		}
+
 		// Backfill per-send unsubscribe times from the event log (MySQL only;
 		// the SQLite dev driver does not translate multi-table UPDATE).
 		if ( ! get_option( 'aiem_fix_unsub_backfill' ) ) {

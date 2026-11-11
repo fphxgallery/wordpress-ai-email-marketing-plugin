@@ -24,6 +24,22 @@ class AIEM_OpenAI {
 			. '(3) The href of links and buttons — use the product URLs provided, or the site URL; never invent a URL. '
 			. 'Critical: styled button links look like <a href="..." style="...">Label</a> — keep the entire style attribute exactly as-is and only change the visible label and the href. Never strip or simplify a style attribute. '
 			. 'For footer placeholder text: use the site name, a short tagline, and the current year. '
+			. 'Layout rule: the template has a header (everything above the first product, such as a logo or banner image), one or more product blocks, and a footer (everything below the last product, such as the unsubscribe link). '
+			. 'A product block is a section holding product placeholders (an empty image, "Product title", "Product text", a button). The header and the footer must each appear exactly once, in their original place; never copy them into or between products. '
+			. 'Fill the template\'s product blocks in order, one product each. If there are more products than product blocks, repeat the last product block (with the separator, such as an <hr> row, that comes before it) for each extra product. If there are fewer products than product blocks, remove the unused product blocks and their separators. '
+			. 'Keep all HTML and styles exactly as-is. Return the complete filled template as the html field.';
+	}
+
+	/** The template prompt shipped in 1.3.8 – 1.4.3, before the header-once layout rule. */
+	public static function previous_template_prompt(): string {
+		return 'You are an expert email marketing copywriter. You will be given an HTML email template and a content brief. '
+			. 'Your ONLY job is to fill in the content — do NOT change any HTML tags, attributes, or style properties. '
+			. 'Copy every tag, every attribute name, and every attribute value character-for-character from the template, with these exceptions only: '
+			. '(1) Text nodes between tags — replace placeholder text ("fillmorephx title", "product title", "product text", "Your footer", "Your Heading", "Your text goes here", "Click Here", etc.) with compelling real content based on the brief. '
+			. '(2) The src and alt attributes on <img> tags — use the product image URL when one is provided; never invent an image URL (if there is none, keep src as it is in the template); always write a descriptive alt. '
+			. '(3) The href of links and buttons — use the product URLs provided, or the site URL; never invent a URL. '
+			. 'Critical: styled button links look like <a href="..." style="...">Label</a> — keep the entire style attribute exactly as-is and only change the visible label and the href. Never strip or simplify a style attribute. '
+			. 'For footer placeholder text: use the site name, a short tagline, and the current year. '
 			. 'Multi-product layout rule: if multiple products are provided, treat everything before the first <hr> as the "product block" and everything after the last <hr> as the "footer block". '
 			. 'Fill the first product block with product 1. Then for each additional product, append an <hr> (copied exactly from the template) followed by a copy of the product block filled with that product\'s details. '
 			. 'Finally append the footer block at the end. Keep all HTML and styles exactly as-is. '
@@ -230,11 +246,12 @@ class AIEM_OpenAI {
 
 		// With a template, the model must keep the layout. If it rebuilt the
 		// email instead, ask once more; never hand back a different design.
-		if ( $template_html && is_array( $parsed ) && ! self::template_kept( $template_html, $parsed['html'] ) ) {
+		$problem = ( $template_html && is_array( $parsed ) ) ? self::template_problem( $template_html, $parsed['html'] ) : '';
+		if ( $problem !== '' ) {
 			$messages[] = [ 'role' => 'assistant', 'content' => wp_json_encode( $parsed ) ];
-			$messages[] = [ 'role' => 'user', 'content' => 'Your html changed the template\'s tags and style attributes. Start again from the template I gave you: copy it exactly, changing only text between tags, img src/alt and link href. Return the same JSON object.' ];
+			$messages[] = [ 'role' => 'user', 'content' => $problem . ' Start again from the template I gave you: copy it exactly, changing only text between tags, img src/alt and link href, and repeating or removing only product blocks. Return the same JSON object.' ];
 			$parsed = self::parse_email_response( self::chat( $messages, $max_output, 0.4 ) );
-			if ( is_array( $parsed ) && ! self::template_kept( $template_html, $parsed['html'] ) ) {
+			if ( is_array( $parsed ) && self::template_problem( $template_html, $parsed['html'] ) !== '' ) {
 				return new WP_Error( 'ai_template_changed', 'The AI did not keep your template\'s layout, so nothing was replaced. Try Generate again, or simplify the brief.' );
 			}
 		}
@@ -247,6 +264,42 @@ class AIEM_OpenAI {
 	 * styling. Compares the template's distinct inline style values; a model
 	 * that rebuilt the email from scratch loses nearly all of them.
 	 */
+	public static function template_problem( string $template_html, string $html ): string {
+		if ( ! self::template_kept( $template_html, $html ) ) {
+			return 'Your html changed the template\'s tags and style attributes.';
+		}
+		// Header images (logo, banner: any img with a src above the first
+		// "Product title" placeholder) must appear exactly as often as in the
+		// template. Copying them into every product was a common failure.
+		$cut = stripos( $template_html, 'product title' );
+		if ( false === $cut ) {
+			return '';
+		}
+		$header = substr( $template_html, 0, $cut );
+		$srcs   = function ( string $h ): array {
+			preg_match_all( '/<img\b[^>]*\bsrc\s*=\s*("([^"]*)"|\'([^\']*)\')/i', $h, $m, PREG_SET_ORDER );
+			$out = [];
+			foreach ( $m as $x ) {
+				$src = trim( html_entity_decode( $x[2] !== '' ? $x[2] : ( $x[3] ?? '' ), ENT_QUOTES ) );
+				if ( $src !== '' ) {
+					$out[ $src ] = ( $out[ $src ] ?? 0 ) + 1;
+				}
+			}
+			return $out;
+		};
+		$have = $srcs( $html );
+		foreach ( $srcs( $header ) as $src => $want ) {
+			$got = $have[ $src ] ?? 0;
+			if ( $got !== $want ) {
+				return sprintf(
+					'The template image %s appears %d time(s) in your html but %d time(s) in the template. It is part of the header, which must appear exactly once in its original place; only product blocks are repeated.',
+					$src, $got, $want
+				);
+			}
+		}
+		return '';
+	}
+
 	public static function template_kept( string $template_html, string $html ): bool {
 		$styles = function ( string $h ): array {
 			preg_match_all( '/\bstyle\s*=\s*("([^"]*)"|\'([^\']*)\')/i', $h, $m, PREG_SET_ORDER );
