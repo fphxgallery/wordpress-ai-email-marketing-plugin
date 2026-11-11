@@ -943,6 +943,7 @@ class AIEM_Admin {
 			'subscribe'         => 'Subscribe',
 			'confirm'           => 'Confirm',
 			'confirm_email'     => 'Confirmation Email',
+			'campaign_skipped'  => 'Campaign Skipped',
 			'unsubscribe'       => 'Unsubscribe',
 			'open'              => 'Open',
 			'click'             => 'Click',
@@ -2177,6 +2178,7 @@ class AIEM_Admin {
 			'confirm_email'        => [ 'scheduled', 'Confirm Email' ],
 			'confirm_email_failed' => [ 'failed',    'Confirm Email Failed' ],
 			'campaign_sent'        => [ 'sending',   'Campaign Sent' ],
+			'campaign_skipped'     => [ 'failed',    'Campaign Skipped' ],
 			'cron_check'       => [ 'scheduled',     'Cron Check' ],
 			'cron_batch'       => [ 'sending',       'Cron Batch' ],
 		];

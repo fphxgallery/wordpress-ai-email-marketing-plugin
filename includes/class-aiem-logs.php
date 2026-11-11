@@ -20,6 +20,7 @@ class AIEM_Logs {
 	const EVENT_CRON_CHECK       = 'cron_check';
 	const EVENT_CRON_BATCH       = 'cron_batch';
 	const EVENT_CONFIRM_EMAIL    = 'confirm_email';
+	const EVENT_CAMPAIGN_SKIPPED = 'campaign_skipped';
 
 	public static function log( string $event_type, array $data = [] ): void {
 		AIEM_DB::insert_log( $event_type, $data );

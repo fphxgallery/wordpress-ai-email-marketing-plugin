@@ -860,9 +860,16 @@ class AIEM_DB {
 		} catch ( Exception $e ) {
 			$base = $now;
 		}
-		$next = $base->modify( $offset );
-		for ( $i = 0; $next <= $now && $i < 2000; $i++ ) {
-			$next = $next->modify( $offset );
+		if ( $base > $now ) {
+			// Sent early (Send Now / Re-send) before the planned run: the
+			// planned run still stands. Stepping here pushed the schedule a
+			// day further out on every manual send.
+			$next = $base;
+		} else {
+			$next = $base->modify( $offset );
+			for ( $i = 0; $next <= $now && $i < 2000; $i++ ) {
+				$next = $next->modify( $offset );
+			}
 		}
 
 		self::archive_campaign_run( $id );
@@ -1225,7 +1232,7 @@ class AIEM_DB {
 		global $wpdb;
 		// Successful confirmation/workflow emails are routine (one per signup);
 		// only their failures are listed.
-		$events = [ 'subscribe', 'confirm', 'unsubscribe', 'bounce', 'send_failed', 'workflow_failed' ];
+		$events = [ 'subscribe', 'confirm', 'unsubscribe', 'bounce', 'send_failed', 'workflow_failed', 'campaign_skipped' ];
 		$in     = implode( ',', array_fill( 0, count( $events ), '%s' ) );
 		$logs   = $wpdb->get_results(
 			$wpdb->prepare(

@@ -118,6 +118,10 @@ class AIEM_Cron {
 						'action'      => 'ai_generate_failed_send_skipped',
 						'error'       => $regen->get_error_message(),
 					] );
+					AIEM_Logs::log( AIEM_Logs::EVENT_CAMPAIGN_SKIPPED, [
+						'campaign_id' => $id,
+						'error'       => 'AI generation failed, nothing sent: ' . $regen->get_error_message(),
+					] );
 					AIEM_DB::schedule_next_recurrence( $id );
 					continue;
 				}
