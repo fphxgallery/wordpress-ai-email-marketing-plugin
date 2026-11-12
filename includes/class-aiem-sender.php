@@ -13,6 +13,8 @@ class AIEM_Sender {
 
 	public static function init(): void {
 		add_action( 'wp_mail_failed', [ __CLASS__, 'handle_mail_failed' ] );
+		add_action( 'wp_ajax_aiem_run_batch', [ __CLASS__, 'ajax_run_batch' ] );
+		add_action( 'wp_ajax_nopriv_aiem_run_batch', [ __CLASS__, 'ajax_run_batch' ] );
 	}
 
 	public static function handle_mail_failed( WP_Error $error ): void {
@@ -104,7 +106,7 @@ class AIEM_Sender {
 		if ( $limit <= 0 ) {
 			return 50;
 		}
-		return max( 20, min( 50, $limit - 10 ) );
+		return max( 15, min( 50, $limit - 10 - self::$slept ) );
 	}
 
 	/** Rolling average of seconds per email, for the pace estimate. */
@@ -114,10 +116,118 @@ class AIEM_Sender {
 		update_option( 'aiem_avg_send_seconds', round( $avg, 3 ), false );
 	}
 
-	/** Replace any queued batch for this campaign with one $delay seconds out. */
+	/**
+	 * Replace any queued batch for this campaign with one $delay seconds out.
+	 *
+	 * The WP-Cron event is only the fallback: WP-Cron runs when someone loads
+	 * the site, so overnight a 15 s delay could become 15 minutes. The
+	 * background runner (kick_runner) sends the next batch on time with no
+	 * site visits needed.
+	 */
 	public static function schedule_next_batch( int $campaign_id, int $delay ): void {
+		$due = time() + max( 1, $delay );
 		wp_clear_scheduled_hook( 'aiem_process_batch', [ $campaign_id ] );
-		wp_schedule_single_event( time() + max( 1, $delay ), 'aiem_process_batch', [ $campaign_id ] );
+		wp_schedule_single_event( $due, 'aiem_process_batch', [ $campaign_id ] );
+		self::kick_runner( $campaign_id, $due );
+	}
+
+	// ── Background runner ────────────────────────────────────────────────
+	//
+	// A non-blocking request from the site to itself (like WordPress's own
+	// spawn_cron) that waits until the next batch is due and sends it. Each
+	// batch kicks a fresh runner, so the chain keeps itself going. Only the
+	// newest runner per campaign counts: older ones see a different run id
+	// and quit. Long waits (back-off, hourly cap) are covered by short sleeps
+	// that re-kick, so no single request runs long.
+
+	/** Seconds slept in this request before the batch, taken off its time budget. */
+	private static int $slept = 0;
+
+	private static function runner_option( int $campaign_id ): string {
+		return 'aiem_runner_' . $campaign_id;
+	}
+
+	private static function runner_sig( int $campaign_id, string $rid ): string {
+		return hash_hmac( 'sha256', 'aiem_runner|' . $campaign_id . '|' . $rid, wp_salt( 'auth' ) );
+	}
+
+	/** Runner state read straight from the database, past any option cache. */
+	private static function runner_state( int $campaign_id ): array {
+		global $wpdb;
+		$raw = $wpdb->get_var( $wpdb->prepare(
+			"SELECT option_value FROM {$wpdb->options} WHERE option_name = %s",
+			self::runner_option( $campaign_id )
+		) );
+		$state = $raw ? maybe_unserialize( $raw ) : null;
+		return is_array( $state ) ? $state : [];
+	}
+
+	public static function kick_runner( int $campaign_id, int $due ): void {
+		if ( ! apply_filters( 'aiem_background_runner', true ) ) {
+			return;
+		}
+		$rid = wp_generate_password( 16, false );
+		update_option( self::runner_option( $campaign_id ), [ 'rid' => $rid, 'due' => $due ], false );
+		wp_cache_delete( self::runner_option( $campaign_id ), 'options' );
+
+		wp_remote_post( admin_url( 'admin-ajax.php' ), [
+			'timeout'   => 0.01,
+			'blocking'  => false,
+			'sslverify' => apply_filters( 'https_local_ssl_verify', false ),
+			'body'      => [
+				'action'      => 'aiem_run_batch',
+				'campaign_id' => $campaign_id,
+				'rid'         => $rid,
+				'sig'         => self::runner_sig( $campaign_id, $rid ),
+			],
+		] );
+	}
+
+	/** admin-ajax handler for the runner (no login: signed instead). */
+	public static function ajax_run_batch(): void {
+		$campaign_id = (int) ( $_POST['campaign_id'] ?? 0 );
+		$rid         = (string) wp_unslash( $_POST['rid'] ?? '' );
+		$sig         = (string) wp_unslash( $_POST['sig'] ?? '' );
+		if ( ! $campaign_id || $rid === '' || ! hash_equals( self::runner_sig( $campaign_id, $rid ), $sig ) ) {
+			wp_die( '', '', [ 'response' => 403 ] );
+		}
+
+		ignore_user_abort( true );
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		}
+		$limit = (int) ini_get( 'max_execution_time' );
+		// Longest single sleep: stay well inside PHP's limit (sleep counts on
+		// Windows) and IIS/FastCGI's activity timeout.
+		$max_sleep = $limit > 0 ? max( 3, $limit - 25 ) : 45;
+
+		for ( $i = 0; $i < 3; $i++ ) {
+			$state = self::runner_state( $campaign_id );
+			if ( ( $state['rid'] ?? '' ) !== $rid ) {
+				wp_die(); // a newer runner took over
+			}
+			$wait = (int) $state['due'] - time();
+			if ( $wait <= 0 ) {
+				break;
+			}
+			if ( $wait > 10 || self::$slept + $wait > $max_sleep ) {
+				// Long wait: sleep part of it, then hand off to a fresh request.
+				sleep( max( 1, min( $wait - 5, $max_sleep ) ) );
+				$state = self::runner_state( $campaign_id );
+				if ( ( $state['rid'] ?? '' ) === $rid ) {
+					self::kick_runner( $campaign_id, (int) $state['due'] );
+				}
+				wp_die();
+			}
+			sleep( $wait );
+			self::$slept += $wait;
+		}
+
+		$campaign = AIEM_DB::get_campaign( $campaign_id );
+		if ( $campaign && $campaign->status === 'sending' ) {
+			self::process_batch( $campaign_id );
+		}
+		wp_die();
 	}
 
 	public static function get_backoff( int $campaign_id ): ?array {
@@ -164,7 +274,29 @@ class AIEM_Sender {
 		return $count;
 	}
 
+	/**
+	 * Run one batch, one at a time per campaign. The background runner and
+	 * the WP-Cron fallback can both reach this; whichever is second skips,
+	 * since the first will schedule the next batch.
+	 */
 	public static function process_batch( int $campaign_id ): bool {
+		$lock = 'aiem_batch_lock_' . $campaign_id;
+		if ( ! add_option( $lock, time(), '', false ) ) {
+			$held = (int) get_option( $lock );
+			if ( $held && time() - $held < 5 * MINUTE_IN_SECONDS ) {
+				return true; // another batch is running right now
+			}
+			// Left behind by a request that died mid-batch: take it over.
+			update_option( $lock, time(), false );
+		}
+		try {
+			return self::run_batch( $campaign_id );
+		} finally {
+			delete_option( $lock );
+		}
+	}
+
+	private static function run_batch( int $campaign_id ): bool {
 		$campaign = AIEM_DB::get_campaign( $campaign_id );
 		if ( ! $campaign ) {
 			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
@@ -327,6 +459,7 @@ class AIEM_Sender {
 			] );
 		} elseif ( AIEM_DB::complete_campaign( $campaign_id ) ) {
 			self::clear_backoff( $campaign_id );
+			delete_option( self::runner_option( $campaign_id ) );
 			// complete_campaign() is atomic, so these run exactly once.
 			AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
 				'campaign_id' => $campaign_id,

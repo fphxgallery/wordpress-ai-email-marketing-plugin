@@ -61,6 +61,8 @@ class AIEM_Workflows {
 
 		$campaign = AIEM_DB::get_campaign( $campaign_id );
 		$context  = [
+			'campaign_id'      => $campaign_id,
+			'campaign_name'    => $campaign->name ?? '',
 			'campaign_subject' => $campaign->subject ?? '',
 			'campaign_count'   => count( $sent_subscriber_ids ),
 			'campaign_date'    => current_time( 'Y-m-d H:i' ),
@@ -314,12 +316,19 @@ class AIEM_Workflows {
 	}
 
 	private static function replace_context_tags( string $text, array $context ): string {
+		$name = (string) ( $context['campaign_name'] ?? '' );
+		if ( $name === '' && ! empty( $context['campaign_id'] ) ) {
+			$campaign = AIEM_DB::get_campaign( (int) $context['campaign_id'] );
+			$name     = (string) ( $campaign->name ?? '' );
+		}
 		return str_ireplace(
-			[ '{{DATE}}',                          '{{SUBJECT}}',                              '{{COUNT}}' ],
+			[ '{{DATE}}', '{{SUBJECT}}', '{{COUNT}}', '{{CAMPAIGN_NAME}}', '{{CAMPAIGN}}' ],
 			[
 				$context['campaign_date']    ?? current_time( 'Y-m-d H:i' ),
 				$context['campaign_subject'] ?? '',
 				(string) ( $context['campaign_count'] ?? '' ),
+				$name,
+				$name,
 			],
 			$text
 		);

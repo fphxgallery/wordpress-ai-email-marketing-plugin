@@ -71,9 +71,14 @@ class AIEM_Cron {
 		$restarted = [];
 		foreach ( AIEM_DB::get_sending_campaigns() as $campaign ) {
 			$id = (int) $campaign->id;
-			if ( ! wp_next_scheduled( 'aiem_process_batch', [ $id ] ) ) {
-				wp_schedule_single_event( time(), 'aiem_process_batch', [ $id ] );
+			$next = wp_next_scheduled( 'aiem_process_batch', [ $id ] );
+			if ( ! $next ) {
+				AIEM_Sender::schedule_next_batch( $id, 1 );
 				$restarted[] = $id;
+			} else {
+				// Restart the background runner in case its chain broke
+				// (a newer runner replaces any that is still waiting).
+				AIEM_Sender::kick_runner( $id, max( time() + 1, (int) $next ) );
 			}
 		}
 
@@ -133,7 +138,7 @@ class AIEM_Cron {
 				'action'      => 'enqueued',
 				'sends'       => $enqueued,
 			] );
-			wp_schedule_single_event( time() + 2, 'aiem_process_batch', [ $id ] );
+			AIEM_Sender::schedule_next_batch( $id, 2 );
 		}
 	}
 

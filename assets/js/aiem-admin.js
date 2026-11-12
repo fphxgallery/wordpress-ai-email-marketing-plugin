@@ -511,7 +511,7 @@ jQuery(function ($) {
 
 	var baseVars = '<code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{email}}</code> <code>{{site_name}}</code> <code>{{site_url}}</code> <code>{{DATE}}</code>';
 	var extraVars = {
-		'campaign_sent':  ' <code>{{SUBJECT}}</code> <code>{{COUNT}}</code>',
+		'campaign_sent':  ' <code>{{CAMPAIGN_NAME}}</code> <code>{{SUBJECT}}</code> <code>{{COUNT}}</code>',
 		'post_published': ' <code>{{post_title}}</code> <code>{{post_url}}</code> <code>{{post_excerpt}}</code> <code>{{post_author}}</code>',
 	};
 
