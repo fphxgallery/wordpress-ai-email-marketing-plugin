@@ -254,6 +254,18 @@ class AIEM_DB {
 			update_option( 'aiem_fix_template_prompt_v2', 1 );
 		}
 
+		// 1.4.6: paused workflows used to keep their queue, so turning one
+		// back on sent the backlog (e.g. one admin notification per campaign
+		// recipient). Drop what paused workflows still have waiting.
+		if ( ! get_option( 'aiem_fix_paused_wf_queue' ) ) {
+			$wpdb->query(
+				"UPDATE {$wpdb->prefix}aiem_workflow_queue SET status = 'skipped'
+				 WHERE status = 'pending' AND workflow_id IN
+				 ( SELECT id FROM {$wpdb->prefix}aiem_workflows WHERE status <> 'active' )"
+			);
+			update_option( 'aiem_fix_paused_wf_queue', 1 );
+		}
+
 		// Backfill per-send unsubscribe times from the event log (MySQL only;
 		// the SQLite dev driver does not translate multi-table UPDATE).
 		if ( ! get_option( 'aiem_fix_unsub_backfill' ) ) {
@@ -1713,6 +1725,17 @@ class AIEM_DB {
 	}
 
 	// ── Workflow Queue ─────────────────────────────────────────────────────
+
+	/** Mark a workflow's pending queue items skipped. Returns how many. */
+	public static function skip_pending_workflow_queue( int $workflow_id ): int {
+		global $wpdb;
+		return (int) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->prefix}aiem_workflow_queue SET status = 'skipped', processed_at = %s WHERE workflow_id = %d AND status = 'pending'",
+				current_time( 'mysql' ), $workflow_id
+			)
+		);
+	}
 
 	public static function insert_workflow_queue( int $workflow_id, int $subscriber_id, string $scheduled_at, int $post_id = 0, array $context = [] ): int|false {
 		$row = [

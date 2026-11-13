@@ -40,6 +40,16 @@ class AIEM_Workflows {
 		}
 	}
 
+	/**
+	 * True when the workflow's "Send to" depends on the subscriber (empty
+	 * means {{EMAIL}}). A fixed address such as an admin notification
+	 * should get one email per event, not one per subscriber.
+	 */
+	public static function sends_to_subscriber( object $wf ): bool {
+		$to = trim( (string) ( $wf->action_send_to ?? '' ) );
+		return $to === '' || strpos( $to, '{{' ) !== false;
+	}
+
 	public static function handle_campaign_sent( int $campaign_id ): void {
 		$workflows = AIEM_DB::get_active_workflows_by_trigger( self::TRIGGER_CAMPAIGN_SENT );
 		if ( empty( $workflows ) ) {
@@ -80,7 +90,11 @@ class AIEM_Workflows {
 			$delay_seconds = self::delay_to_seconds( (int) $wf->delay_value, $wf->delay_unit );
 			$scheduled_at  = gmdate( 'Y-m-d H:i:s', time() + $delay_seconds );
 
-			foreach ( $sent_subscriber_ids as $subscriber_id ) {
+			// A fixed "Send to" address (e.g. an admin notification) gets one
+			// email per campaign, not one per recipient.
+			$recipients = self::sends_to_subscriber( $wf ) ? $sent_subscriber_ids : [ $sent_subscriber_ids[0] ];
+
+			foreach ( $recipients as $subscriber_id ) {
 				$queued = AIEM_DB::insert_workflow_queue( (int) $wf->id, $subscriber_id, $scheduled_at, 0, $context );
 				if ( $queued ) {
 					AIEM_Logs::log( AIEM_Logs::EVENT_WORKFLOW_QUEUED, [
@@ -129,6 +143,10 @@ class AIEM_Workflows {
 
 			$delay_seconds = self::delay_to_seconds( (int) $wf->delay_value, $wf->delay_unit );
 			$scheduled_at  = gmdate( 'Y-m-d H:i:s', time() + $delay_seconds );
+
+			if ( ! self::sends_to_subscriber( $wf ) ) {
+				$subscribers = [ $subscribers[0] ]; // fixed address: one email per post
+			}
 
 			$count = 0;
 			foreach ( $subscribers as $sub ) {

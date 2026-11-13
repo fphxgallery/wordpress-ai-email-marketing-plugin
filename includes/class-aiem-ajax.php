@@ -840,6 +840,11 @@ class AIEM_Ajax {
 		}
 		$new_status = $wf->status === 'active' ? 'inactive' : 'active';
 		AIEM_DB::update_workflow( $id, [ 'status' => $new_status ] );
+		if ( $new_status === 'inactive' ) {
+			// Pausing drops what was waiting, so turning the workflow back on
+			// doesn't send a backlog.
+			AIEM_DB::skip_pending_workflow_queue( $id );
+		}
 		wp_send_json_success( [ 'message' => "Workflow {$new_status}.", 'status' => $new_status ] );
 	}
 
