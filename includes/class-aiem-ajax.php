@@ -76,6 +76,9 @@ class AIEM_Ajax {
 			}
 
 			$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
+			if ( ! $products && AIEM_WooCommerce::upcoming_only() ) {
+				wp_send_json_error( [ 'message' => 'No upcoming events found. Only products with an event date of today or later are used (Settings → Upcoming events only). Add the events, or untick "Include WooCommerce products".' ] );
+			}
 		}
 
 		$template_html = '';

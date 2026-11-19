@@ -10,7 +10,9 @@ class AIEM_WooCommerce {
 	 * Products for AI prompts. Event products (a date in the title, e.g.
 	 * "Artist – 11.13.2026") are chosen by event date: past events are
 	 * skipped and the soonest come first. Products without a date follow,
-	 * newest first. Returns at most the "Products to include" setting.
+	 * newest first, unless "Upcoming events only" is on (the default): then
+	 * only dated, upcoming events are used, so an old show whose date can't
+	 * be read is never promoted. Returns at most "Products to include".
 	 */
 	public static function get_recent_products( array $category_ids = [], array $tag_ids = [] ): array {
 		if ( ! function_exists( 'wc_get_products' ) ) {
@@ -64,6 +66,9 @@ class AIEM_WooCommerce {
 			}
 		}
 		usort( $events, fn( $x, $y ) => $x[0] <=> $y[0] );
+		if ( self::upcoming_only() ) {
+			$others = [];
+		}
 
 		$result = [];
 		foreach ( array_slice( array_merge( $events, $others ), 0, $count ) as [ $event_ts, $product ] ) {
@@ -91,14 +96,20 @@ class AIEM_WooCommerce {
 		return is_numeric( $ts ) ? (int) $ts : null;
 	}
 
-	/** First valid US-style date (MM.DD.YYYY etc.) in the text, as a timestamp. */
-	private static function first_date_in( string $text ): ?int {
-		if ( ! preg_match_all( '/(?<!\d)(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})(?!\d)/', $text, $all, PREG_SET_ORDER ) ) {
+	/**
+	 * First valid US-style date in the text, as a timestamp: MM.DD.YYYY or
+	 * the short MM.DD.YY ("5.30.26" = May 30, 2026), with . / or - between.
+	 */
+	public static function first_date_in( string $text ): ?int {
+		if ( ! preg_match_all( '/(?<![\d.\/-])(\d{1,2})([.\/-])(\d{1,2})\2(\d{4}|\d{2})(?![\d.\/-]*\d)/', $text, $all, PREG_SET_ORDER ) ) {
 			return null;
 		}
 		foreach ( $all as $m ) {
-			if ( checkdate( (int) $m[1], (int) $m[2], (int) $m[3] ) ) {
-				return ( new DateTimeImmutable( sprintf( '%04d-%02d-%02d', $m[3], $m[1], $m[2] ), wp_timezone() ) )->getTimestamp();
+			$month = (int) $m[1];
+			$day   = (int) $m[3];
+			$year  = strlen( $m[4] ) === 2 ? 2000 + (int) $m[4] : (int) $m[4];
+			if ( checkdate( $month, $day, $year ) ) {
+				return ( new DateTimeImmutable( sprintf( '%04d-%02d-%02d', $year, $month, $day ), wp_timezone() ) )->getTimestamp();
 			}
 		}
 		return null;
@@ -130,6 +141,11 @@ class AIEM_WooCommerce {
 			'event_date'  => $event_ts !== null ? wp_date( 'l, F j, Y', $event_ts ) : '',
 			'image'       => $image_id ? ( wp_get_attachment_image_url( $image_id, 'medium' ) ?: '' ) : '',
 		];
+	}
+
+	/** "Upcoming events only" setting: never fall back to undated products. */
+	public static function upcoming_only(): bool {
+		return get_option( 'aiem_upcoming_only', '1' ) === '1';
 	}
 
 	public static function get_product_categories(): array {

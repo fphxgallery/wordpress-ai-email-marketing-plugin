@@ -1179,7 +1179,7 @@ class AIEM_Admin {
 						?>
 							<label class="aiem-checkbox">
 								<input type="checkbox" id="aiem-use-woo" checked />
-								Include WooCommerce products (up to <?php echo (int) get_option( 'aiem_product_count', 5 ); ?>; upcoming events by date first, past events skipped)
+								Include WooCommerce products (up to <?php echo (int) get_option( 'aiem_product_count', 5 ); ?>; upcoming events by date first, past events skipped<?php echo AIEM_WooCommerce::upcoming_only() ? ', undated products left out' : ''; ?>)
 							</label>
 							<div id="aiem-woo-filters" style="margin-top:10px;padding:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;display:flex;gap:24px;flex-wrap:wrap;">
 								<?php if ( $woo_cats ) : ?>
@@ -1886,6 +1886,16 @@ class AIEM_Admin {
 							<p class="description">Number of recent WooCommerce products to pull into AI prompts.</p>
 						</td>
 					</tr>
+					<tr>
+						<th>Upcoming events only</th>
+						<td>
+							<label>
+								<input type="checkbox" name="aiem_upcoming_only" value="1" <?php checked( get_option( 'aiem_upcoming_only', '1' ), '1' ); ?> />
+								Only use products with an event date of today or later
+							</label>
+							<p class="description">The date is read from the product title or description (e.g. 11.20.2026 or 11.20.26). Products without a readable date are left out, so an old show is never promoted. If a recurring campaign finds no upcoming events, it sends nothing that week and emails you instead. Turn this off to also include products without a date.</p>
+						</td>
+					</tr>
 					<?php if ( function_exists( 'wc_get_products' ) ) :
 						$woo_cats     = AIEM_WooCommerce::get_product_categories();
 						$woo_tags     = AIEM_WooCommerce::get_product_tags();
@@ -2127,6 +2137,7 @@ class AIEM_Admin {
 			'aiem_from_email'       => sanitize_email( wp_unslash( $_POST['aiem_from_email'] ?? '' ) ),
 			'aiem_default_list'     => (int) ( $_POST['aiem_default_list'] ?? 0 ),
 			'aiem_product_count'    => max( 1, (int) ( $_POST['aiem_product_count'] ?? 5 ) ),
+			'aiem_upcoming_only'    => isset( $_POST['aiem_upcoming_only'] ) ? '1' : '0',
 			'aiem_double_optin'     => isset( $_POST['aiem_double_optin'] ) ? '1' : '0',
 			'aiem_bounce_threshold' => max( 1, (int) ( $_POST['aiem_bounce_threshold'] ?? 3 ) ),
 			'aiem_batch_size'       => max( 1, min( 500, (int) ( $_POST['aiem_batch_size'] ?? 50 ) ) ),

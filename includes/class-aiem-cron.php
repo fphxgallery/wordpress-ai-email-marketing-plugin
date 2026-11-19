@@ -123,11 +123,15 @@ class AIEM_Cron {
 						'action'      => 'ai_generate_failed_send_skipped',
 						'error'       => $regen->get_error_message(),
 					] );
+					$reason = $regen->get_error_code() === 'aiem_no_upcoming_events'
+						? $regen->get_error_message()
+						: 'AI generation failed: ' . $regen->get_error_message();
 					AIEM_Logs::log( AIEM_Logs::EVENT_CAMPAIGN_SKIPPED, [
 						'campaign_id' => $id,
-						'error'       => 'AI generation failed, nothing sent: ' . $regen->get_error_message(),
+						'error'       => 'Nothing sent. ' . $reason,
 					] );
 					AIEM_DB::schedule_next_recurrence( $id );
+					self::alert_skipped( $campaign, $reason );
 					continue;
 				}
 			}
@@ -140,6 +144,32 @@ class AIEM_Cron {
 			] );
 			AIEM_Sender::schedule_next_batch( $id, 2 );
 		}
+	}
+
+	/**
+	 * Tell someone when a scheduled send was skipped, so a missed week is
+	 * noticed the same day. Goes to the campaign's From address (the team
+	 * inbox), else the default From address, else the site admin.
+	 */
+	private static function alert_skipped( object $campaign, string $reason ): void {
+		$to = $campaign->from_email ?: get_option( 'aiem_from_email' ) ?: get_option( 'admin_email' );
+		if ( ! is_email( $to ) ) {
+			return;
+		}
+		$next = AIEM_DB::get_campaign( (int) $campaign->id );
+		$body = sprintf(
+			"The scheduled send of \"%s\" was skipped. Nothing was sent to subscribers.\n\nReason: %s\n\nNext scheduled run: %s\n\nTo send this week after fixing it, open the campaign, generate the email again and use Send Now:\n%s\n",
+			$campaign->name,
+			$reason,
+			$next && $next->scheduled_at ? wp_date( 'D, M j, g:i a', strtotime( get_gmt_from_date( $next->scheduled_at ) ) ) : 'none',
+			admin_url( 'admin.php?page=aiem-campaign-edit&campaign_id=' . (int) $campaign->id )
+		);
+		$sent = wp_mail( $to, sprintf( '[%s] Campaign "%s" skipped: nothing sent', wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ), $campaign->name ), $body );
+		AIEM_Logs::log( AIEM_Logs::EVENT_CRON_CHECK, [
+			'campaign_id' => (int) $campaign->id,
+			'action'      => $sent ? 'skip_alert_sent' : 'skip_alert_failed',
+			'to'          => $to,
+		] );
 	}
 
 	public function process_workflows(): void {

@@ -446,7 +446,23 @@ class AIEM_OpenAI {
 		if ( function_exists( 'wc_get_products' ) ) {
 			$cat_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_category_ids ?? '[]', true ) ?: [] ) );
 			$tag_ids  = array_filter( array_map( 'intval', json_decode( $campaign->woo_tag_ids ?? '[]', true ) ?: [] ) );
+			// Same fallback as the editor's Generate button: no campaign
+			// filter means the global one from Settings.
+			if ( ! $cat_ids ) {
+				$cat_ids = array_filter( array_map( 'intval', json_decode( get_option( 'aiem_woo_categories', '[]' ), true ) ?: [] ) );
+			}
+			if ( ! $tag_ids ) {
+				$tag_ids = array_filter( array_map( 'intval', json_decode( get_option( 'aiem_woo_tags', '[]' ), true ) ?: [] ) );
+			}
 			$products = AIEM_WooCommerce::get_recent_products( array_values( $cat_ids ), array_values( $tag_ids ) );
+
+			// Better to send nothing than last week's (or older) shows.
+			if ( ! $products && AIEM_WooCommerce::upcoming_only() ) {
+				return new WP_Error(
+					'aiem_no_upcoming_events',
+					'No upcoming events found (only products dated today or later are used). Add this week\'s events, then generate the campaign and use Send Now.'
+				);
+			}
 		}
 
 		$tpl_html = '';
