@@ -828,6 +828,22 @@ jQuery(function ($) {
 		});
 	});
 
+	$(document).on('click', '.aiem-stop-link', function (e) {
+		e.preventDefault();
+		var link       = $(this);
+		var campaignId = link.data('campaign');
+		if (!confirm('Stop sending this campaign? Emails already sent stay sent; nobody else will get it. A recurring campaign moves on to its next run.')) { return; }
+		link.text('Stopping…');
+		$.post(aiemAdmin.ajaxUrl, {
+			action:      'aiem_stop_campaign',
+			nonce:       aiemAdmin.nonce,
+			campaign_id: campaignId,
+		}, function (res) {
+			alert(res.success ? res.data.message : (res.data.message || 'Stop failed.'));
+			window.location.reload();
+		});
+	});
+
 	$(document).on('click', '.aiem-resend-link', function (e) {
 		e.preventDefault();
 		var link       = $(this);

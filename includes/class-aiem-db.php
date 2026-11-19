@@ -859,6 +859,30 @@ class AIEM_DB {
 		$wpdb->delete( "{$wpdb->prefix}aiem_sends", [ 'campaign_id' => $id ], [ '%d' ] );
 	}
 
+	/** Delete a campaign's sends that have not gone out yet. Returns how many. */
+	public static function cancel_pending_sends( int $id ): int {
+		global $wpdb;
+		return (int) $wpdb->query(
+			$wpdb->prepare( "DELETE FROM {$wpdb->prefix}aiem_sends WHERE campaign_id = %d AND status = 'pending'", $id )
+		);
+	}
+
+	/**
+	 * Before a recurring campaign's next run: file away anything left from
+	 * the previous run (e.g. one stopped part-way), so the new run goes to
+	 * the whole list and its stats start fresh.
+	 */
+	public static function reset_leftover_sends( int $id ): void {
+		global $wpdb;
+		$left = (int) $wpdb->get_var(
+			$wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}aiem_sends WHERE campaign_id = %d", $id )
+		);
+		if ( $left ) {
+			self::archive_campaign_run( $id );
+			self::clear_sends( $id );
+		}
+	}
+
 	public static function schedule_next_recurrence( int $id ): void {
 		$campaign = self::get_campaign( $id );
 		if ( ! $campaign || ! $campaign->recur_schedule ) {

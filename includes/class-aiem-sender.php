@@ -251,6 +251,34 @@ class AIEM_Sender {
 		delete_option( 'aiem_backoff_' . $campaign_id );
 	}
 
+	/**
+	 * Stop a sending campaign: cancel unsent emails and the batch chain. A
+	 * batch already mid-send finishes the email it is on and finds nothing
+	 * else to claim. Returns how many unsent emails were cancelled.
+	 */
+	public static function stop( int $campaign_id ): int {
+		$campaign = AIEM_DB::get_campaign( $campaign_id );
+		if ( ! $campaign ) {
+			return 0;
+		}
+		wp_clear_scheduled_hook( 'aiem_process_batch', [ $campaign_id ] );
+		delete_option( self::runner_option( $campaign_id ) );
+		self::clear_backoff( $campaign_id );
+		$cancelled = AIEM_DB::cancel_pending_sends( $campaign_id );
+
+		if ( $campaign->recur_schedule ) {
+			AIEM_DB::schedule_next_recurrence( $campaign_id ); // files the run, sets the next date
+		} else {
+			AIEM_DB::update_campaign( $campaign_id, [ 'status' => 'sent', 'sent_at' => $campaign->sent_at ?: current_time( 'mysql' ) ] );
+		}
+		AIEM_Logs::log( AIEM_Logs::EVENT_CRON_BATCH, [
+			'campaign_id' => $campaign_id,
+			'action'      => 'stopped_by_admin',
+			'cancelled'   => $cancelled,
+		] );
+		return $cancelled;
+	}
+
 	public static function enqueue_sends( int $campaign_id ): int {
 		$campaign = AIEM_DB::get_campaign( $campaign_id );
 		if ( ! $campaign ) {

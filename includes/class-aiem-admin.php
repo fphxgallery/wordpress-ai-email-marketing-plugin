@@ -1065,6 +1065,10 @@ class AIEM_Admin {
 							&nbsp;|&nbsp;
 							<a href="#" class="aiem-send-now-link" data-campaign="<?php echo (int) $c->id; ?>">Send Now</a>
 							<?php endif; ?>
+							<?php if ( $c->status === 'sending' ) : ?>
+							&nbsp;|&nbsp;
+							<a href="#" class="aiem-stop-link aiem-danger" data-campaign="<?php echo (int) $c->id; ?>">Stop</a>
+							<?php endif; ?>
 							<?php if ( in_array( $c->status, [ 'sent', 'sending' ], true ) ) : ?>
 							&nbsp;|&nbsp;
 							<a href="#" class="aiem-resend-link" data-campaign="<?php echo (int) $c->id; ?>">Re-send</a>

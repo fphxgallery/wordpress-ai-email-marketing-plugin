@@ -32,6 +32,7 @@ class AIEM_Ajax {
 			'aiem_rewrite_text',
 			'aiem_resend_non_openers',
 			'aiem_resend_campaign',
+			'aiem_stop_campaign',
 			'aiem_process_workflow_queue',
 		];
 
@@ -179,6 +180,12 @@ class AIEM_Ajax {
 			wp_send_json_error( [ 'message' => 'This campaign is already sending.' ] );
 		}
 
+		// Leftovers from a run that was stopped part-way would otherwise limit
+		// this send to the people that run never reached.
+		if ( $campaign->recur_schedule && $prev_status === 'scheduled' ) {
+			AIEM_DB::reset_leftover_sends( $campaign_id );
+		}
+
 		// Regenerate AI content for recurring AI campaigns, same as the cron path.
 		if ( $campaign->recur_schedule && $campaign->ai_prompt ) {
 			$regen = AIEM_OpenAI::regenerate_campaign( $campaign );
@@ -203,6 +210,30 @@ class AIEM_Ajax {
 		AIEM_Sender::process_batch( $campaign_id );
 
 		wp_send_json_success( [ 'message' => "Sent to {$count} subscriber(s).", 'count' => $count ] );
+	}
+
+	/**
+	 * Stop a campaign that is sending. Emails already sent stay sent; nobody
+	 * else gets it. A recurring campaign moves on to its next run, a one-off
+	 * is marked sent (to the people it reached).
+	 */
+	public function stop_campaign(): void {
+		$this->verify_admin();
+		$campaign_id = (int) ( $_POST['campaign_id'] ?? 0 );
+		$campaign    = $campaign_id ? AIEM_DB::get_campaign( $campaign_id ) : null;
+		if ( ! $campaign ) {
+			wp_send_json_error( [ 'message' => 'Campaign not found.' ] );
+		}
+		if ( $campaign->status !== 'sending' ) {
+			wp_send_json_error( [ 'message' => 'This campaign is not sending.' ] );
+		}
+
+		$cancelled = AIEM_Sender::stop( $campaign_id );
+		$fresh     = AIEM_DB::get_campaign( $campaign_id );
+		$next      = ( $fresh && $fresh->status === 'scheduled' && $fresh->scheduled_at )
+			? ' Next run: ' . wp_date( 'M j, g:i a', strtotime( get_gmt_from_date( $fresh->scheduled_at ) ) ) . '.'
+			: '';
+		wp_send_json_success( [ 'message' => "Stopped. {$cancelled} unsent email(s) cancelled.{$next}" ] );
 	}
 
 	public function schedule_campaign(): void {

@@ -112,6 +112,10 @@ class AIEM_Cron {
 				continue;
 			}
 
+			if ( $campaign->recur_schedule ) {
+				AIEM_DB::reset_leftover_sends( $id );
+			}
+
 			if ( $campaign->recur_schedule && $campaign->ai_prompt ) {
 				$regen = AIEM_OpenAI::regenerate_campaign( $campaign );
 
