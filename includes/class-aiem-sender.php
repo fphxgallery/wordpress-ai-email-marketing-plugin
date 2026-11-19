@@ -317,10 +317,58 @@ class AIEM_Sender {
 			// Left behind by a request that died mid-batch: take it over.
 			update_option( $lock, time(), false );
 		}
+		self::keepalive_start();
 		try {
 			return self::run_batch( $campaign_id );
 		} finally {
+			self::keepalive_end();
 			delete_option( $lock );
+		}
+	}
+
+	// ── One SMTP login per batch ─────────────────────────────────────────
+	//
+	// wp_mail() reuses one PHPMailer object per request but, by default,
+	// opens a new SMTP connection and logs in for every email. Providers
+	// such as Proton treat a login every few seconds as abuse and refuse
+	// ("Could not authenticate"). With keep-alive the batch logs in once
+	// and sends all its emails over that connection, which is closed when
+	// the batch ends.
+
+	private static bool $keepalive = false;
+
+	public static function keepalive_enabled(): bool {
+		return (bool) apply_filters( 'aiem_smtp_keepalive', get_option( 'aiem_smtp_keepalive', '1' ) === '1' );
+	}
+
+	private static function keepalive_start(): void {
+		self::$keepalive = self::keepalive_enabled();
+		if ( self::$keepalive ) {
+			// Last, so it applies after WP Mail SMTP has configured the mailer.
+			add_action( 'phpmailer_init', [ __CLASS__, 'keepalive_mailer' ], PHP_INT_MAX );
+		}
+	}
+
+	public static function keepalive_mailer( $mailer ): void {
+		if ( isset( $mailer->Mailer ) && $mailer->Mailer === 'smtp' ) {
+			$mailer->SMTPKeepAlive = true;
+		}
+	}
+
+	private static function keepalive_end(): void {
+		if ( ! self::$keepalive ) {
+			return;
+		}
+		self::$keepalive = false;
+		remove_action( 'phpmailer_init', [ __CLASS__, 'keepalive_mailer' ], PHP_INT_MAX );
+		global $phpmailer;
+		if ( is_object( $phpmailer ) && method_exists( $phpmailer, 'smtpClose' ) ) {
+			$phpmailer->SMTPKeepAlive = false;
+			try {
+				$phpmailer->smtpClose();
+			} catch ( \Throwable $e ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement
+				// Connection already gone: nothing to close.
+			}
 		}
 	}
 

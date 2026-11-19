@@ -1859,13 +1859,23 @@ class AIEM_Admin {
 						</td>
 					</tr>
 					<tr>
+						<th>One login per batch</th>
+						<td>
+							<label>
+								<input type="checkbox" name="aiem_smtp_keepalive" value="1" <?php checked( get_option( 'aiem_smtp_keepalive', '1' ), '1' ); ?> />
+								Keep the mail server connection open for a whole batch
+							</label>
+							<p class="description">Logs in to your SMTP server once per batch instead of once per email. Providers like Proton refuse frequent logins ("Could not authenticate"). Turn off only if batches start failing after the first email.</p>
+						</td>
+					</tr>
+					<tr>
 						<th>Estimated pace</th>
 						<td>
 							<div id="aiem-pace" class="aiem-pace"
 								data-avg="<?php echo esc_attr( $aiem_avg ); ?>"
 								data-budget="<?php echo (int) AIEM_Sender::batch_time_budget(); ?>"
 								data-list="<?php echo (int) $aiem_list_max; ?>"></div>
-							<p class="description">Based on <?php echo $aiem_avg > 0 ? esc_html( sprintf( 'your mail server averaging %.1f s per email', $aiem_avg ) ) : 'an assumed 1.5 s per email (no campaign sent yet)'; ?>. WordPress cron only runs when the site gets visits, so real delays can be longer on a quiet site.</p>
+							<p class="description">Based on <?php echo $aiem_avg > 0 ? esc_html( sprintf( 'your mail server averaging %.1f s per email', $aiem_avg ) ) : 'an assumed 1.5 s per email (no campaign sent yet)'; ?>. With one login per batch, emails usually go out faster than this until the average updates.</p>
 						</td>
 					</tr>
 					<tr>
@@ -2147,6 +2157,7 @@ class AIEM_Admin {
 			'aiem_batch_size'       => max( 1, min( 500, (int) ( $_POST['aiem_batch_size'] ?? 50 ) ) ),
 			'aiem_batch_delay'      => max( 1, min( 3600, (int) ( $_POST['aiem_batch_delay'] ?? 5 ) ) ),
 			'aiem_hourly_limit'     => max( 0, min( 100000, (int) ( $_POST['aiem_hourly_limit'] ?? 0 ) ) ),
+			'aiem_smtp_keepalive'   => isset( $_POST['aiem_smtp_keepalive'] ) ? '1' : '0',
 			'aiem_log_retention_days'  => max( 0, min( 3650, (int) ( $_POST['aiem_log_retention_days'] ?? 90 ) ) ),
 			'aiem_delete_on_uninstall' => isset( $_POST['aiem_delete_on_uninstall'] ) ? '1' : '0',
 			'aiem_woo_categories'   => wp_json_encode( $woo_cats_raw ),
