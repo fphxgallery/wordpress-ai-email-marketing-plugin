@@ -77,39 +77,102 @@ class AIEM_WooCommerce {
 		return $result;
 	}
 
+	/** How far after the listing was created a year-corrected date may land. */
+	const YEAR_FIX_DAYS = 120;
+
 	/**
 	 * Event date as a timestamp (site timezone, midnight) or null. Looks for
-	 * MM.DD.YYYY, MM-DD-YYYY or MM/DD/YYYY in the title first, then the
-	 * short description, then the full description (first date found). The
-	 * aiem_product_event_timestamp filter can supply it from elsewhere.
+	 * MM.DD.YYYY (also MM.DD.YY, / or -) in the title first, then the short
+	 * description, then the full description.
+	 *
+	 * A ticket listing is created before its show, so the product's created
+	 * date catches typos: a title date that falls before it (e.g. 11.27.2025
+	 * on a listing made in Nov 2026) gives way to a date in the description,
+	 * or failing that is moved to the next year if that lands soon after the
+	 * listing was made. A title date with no year ("11/29") gets the first
+	 * such date on or after the listing. An old listing copied and left
+	 * unedited stays in the past. The aiem_product_event_timestamp filter
+	 * can supply the date from elsewhere.
 	 */
 	public static function event_timestamp( WC_Product $product ): ?int {
-		$ts = null;
-		foreach ( [ $product->get_name(), $product->get_short_description(), $product->get_description() ] as $text ) {
+		$created = $product->get_date_created();
+		$anchor  = $created
+			? ( new DateTimeImmutable( '@' . $created->getTimestamp() ) )->setTimezone( wp_timezone() )->setTime( 0, 0 )->modify( '-2 days' )->getTimestamp()
+			: null;
+
+		$ts    = null;
+		$stale = null; // a date found that falls before the listing was made
+		foreach ( [ $product->get_name(), $product->get_short_description(), $product->get_description() ] as $i => $text ) {
 			// Tags become spaces, so "10.09.2026</p><p>Main" stays separate words.
-			$ts = self::first_date_in( wp_strip_all_tags( preg_replace( '/<[^>]*>/', ' ', (string) $text ) ) );
-			if ( $ts !== null ) {
+			$plain = wp_strip_all_tags( preg_replace( '/<[^>]*>/', ' ', (string) $text ) );
+			// Year-less dates only in the title, where "Artist – 11/29" is a
+			// date; in descriptions "9.30" is as likely a time or a price.
+			$found = self::first_date_in( $plain, $i === 0 ? $anchor : null );
+			if ( $found === null ) {
+				continue;
+			}
+			if ( $anchor === null || $found >= $anchor ) {
+				$ts = $found;
 				break;
 			}
+			$stale = $stale ?? $found;
 		}
+		if ( $ts === null && $stale !== null ) {
+			$ts = self::roll_forward( $stale, (int) $anchor ) ?? $stale;
+		}
+
 		$ts = apply_filters( 'aiem_product_event_timestamp', $ts, $product );
 		return is_numeric( $ts ) ? (int) $ts : null;
 	}
 
 	/**
+	 * Same month and day, first year on or after $anchor, if that lands
+	 * within YEAR_FIX_DAYS of it; otherwise null.
+	 */
+	private static function roll_forward( int $ts, int $anchor ): ?int {
+		$tz   = wp_timezone();
+		$date = ( new DateTimeImmutable( '@' . $ts ) )->setTimezone( $tz );
+		$a    = ( new DateTimeImmutable( '@' . $anchor ) )->setTimezone( $tz );
+		$m    = (int) $date->format( 'n' );
+		$d    = (int) $date->format( 'j' );
+		foreach ( [ (int) $a->format( 'Y' ), (int) $a->format( 'Y' ) + 1 ] as $year ) {
+			if ( ! checkdate( $m, $d, $year ) ) {
+				continue;
+			}
+			$try = ( new DateTimeImmutable( sprintf( '%04d-%02d-%02d', $year, $m, $d ), $tz ) )->getTimestamp();
+			if ( $try >= $anchor ) {
+				return $try - $anchor <= self::YEAR_FIX_DAYS * DAY_IN_SECONDS ? $try : null;
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * First valid US-style date in the text, as a timestamp: MM.DD.YYYY or
 	 * the short MM.DD.YY ("5.30.26" = May 30, 2026), with . / or - between.
+	 * With $no_year_anchor, a date without a year ("11/29", "11.29") also
+	 * counts, placed on the first such date on or after the anchor.
 	 */
-	public static function first_date_in( string $text ): ?int {
-		if ( ! preg_match_all( '/(?<![\d.\/-])(\d{1,2})([.\/-])(\d{1,2})\2(\d{4}|\d{2})(?![\d.\/-]*\d)/', $text, $all, PREG_SET_ORDER ) ) {
-			return null;
+	public static function first_date_in( string $text, ?int $no_year_anchor = null ): ?int {
+		if ( preg_match_all( '/(?<![\d.\/-])(\d{1,2})([.\/-])(\d{1,2})\2(\d{4}|\d{2})(?![\d.\/-]*\d)/', $text, $all, PREG_SET_ORDER ) ) {
+			foreach ( $all as $m ) {
+				$month = (int) $m[1];
+				$day   = (int) $m[3];
+				$year  = strlen( $m[4] ) === 2 ? 2000 + (int) $m[4] : (int) $m[4];
+				if ( checkdate( $month, $day, $year ) ) {
+					return ( new DateTimeImmutable( sprintf( '%04d-%02d-%02d', $year, $month, $day ), wp_timezone() ) )->getTimestamp();
+				}
+			}
 		}
-		foreach ( $all as $m ) {
-			$month = (int) $m[1];
-			$day   = (int) $m[3];
-			$year  = strlen( $m[4] ) === 2 ? 2000 + (int) $m[4] : (int) $m[4];
-			if ( checkdate( $month, $day, $year ) ) {
-				return ( new DateTimeImmutable( sprintf( '%04d-%02d-%02d', $year, $month, $day ), wp_timezone() ) )->getTimestamp();
+		if ( $no_year_anchor !== null && preg_match_all( '/(?<![\d.\/-])(\d{1,2})[.\/](\d{1,2})(?![\d.\/-]*\d)/', $text, $all, PREG_SET_ORDER ) ) {
+			foreach ( $all as $m ) {
+				if ( checkdate( (int) $m[1], (int) $m[2], 2000 ) ) { // 2000: allows Feb 29
+					$guess = ( new DateTimeImmutable( sprintf( '2000-%02d-%02d', $m[1], $m[2] ), wp_timezone() ) )->getTimestamp();
+					$ts    = self::roll_forward( $guess, $no_year_anchor );
+					if ( $ts !== null ) {
+						return $ts;
+					}
+				}
 			}
 		}
 		return null;
