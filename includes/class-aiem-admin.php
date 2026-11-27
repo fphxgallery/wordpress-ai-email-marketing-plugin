@@ -1859,13 +1859,20 @@ class AIEM_Admin {
 						</td>
 					</tr>
 					<tr>
-						<th>One login per batch</th>
+						<th>Max emails per minute</th>
+						<td>
+							<input type="number" id="aiem-per-minute" name="aiem_per_minute" value="<?php echo (int) get_option( 'aiem_per_minute', 0 ); ?>" min="0" max="600" class="small-text" />
+							<p class="description">0 = no limit. Spreads emails evenly (6 = one every 10 seconds) instead of sending each batch in a burst. Proton refuses bursts with "too much mail"; 6 is about the pace that worked before. With this set, a short delay between batches (e.g. 5 s) is enough.</p>
+						</td>
+					</tr>
+					<tr>
+						<th>Reuse SMTP connection</th>
 						<td>
 							<label>
 								<input type="checkbox" name="aiem_smtp_keepalive" value="1" <?php checked( get_option( 'aiem_smtp_keepalive', '1' ), '1' ); ?> />
 								Keep the mail server connection open for a whole batch
 							</label>
-							<p class="description">Logs in to your SMTP server once per batch instead of once per email. Providers like Proton refuse frequent logins ("Could not authenticate"). Turn off only if batches start failing after the first email.</p>
+							<p class="description">Logs in to your SMTP server once per 10 emails instead of once per email. Providers like Proton refuse frequent logins ("Could not authenticate"). Turn off only if batches start failing after the first email.</p>
 						</td>
 					</tr>
 					<tr>
@@ -2158,6 +2165,7 @@ class AIEM_Admin {
 			'aiem_batch_delay'      => max( 1, min( 3600, (int) ( $_POST['aiem_batch_delay'] ?? 5 ) ) ),
 			'aiem_hourly_limit'     => max( 0, min( 100000, (int) ( $_POST['aiem_hourly_limit'] ?? 0 ) ) ),
 			'aiem_smtp_keepalive'   => isset( $_POST['aiem_smtp_keepalive'] ) ? '1' : '0',
+			'aiem_per_minute'       => max( 0, min( 600, (int) ( $_POST['aiem_per_minute'] ?? 0 ) ) ),
 			'aiem_log_retention_days'  => max( 0, min( 3650, (int) ( $_POST['aiem_log_retention_days'] ?? 90 ) ) ),
 			'aiem_delete_on_uninstall' => isset( $_POST['aiem_delete_on_uninstall'] ) ? '1' : '0',
 			'aiem_woo_categories'   => wp_json_encode( $woo_cats_raw ),

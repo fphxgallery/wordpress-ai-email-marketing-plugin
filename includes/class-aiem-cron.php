@@ -112,6 +112,8 @@ class AIEM_Cron {
 				continue;
 			}
 
+			// A new run starts without last run's mail-server back-off.
+			AIEM_Sender::clear_backoff( $id );
 			if ( $campaign->recur_schedule ) {
 				AIEM_DB::reset_leftover_sends( $id );
 			}

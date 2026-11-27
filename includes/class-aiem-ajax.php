@@ -182,6 +182,7 @@ class AIEM_Ajax {
 
 		// Leftovers from a run that was stopped part-way would otherwise limit
 		// this send to the people that run never reached.
+		AIEM_Sender::clear_backoff( $campaign_id );
 		if ( $campaign->recur_schedule && $prev_status === 'scheduled' ) {
 			AIEM_DB::reset_leftover_sends( $campaign_id );
 		}

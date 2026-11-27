@@ -355,11 +355,47 @@ class AIEM_Sender {
 		}
 	}
 
+	/** Emails sent on the current kept-open connection. */
+	private static int $on_connection = 0;
+
+	/**
+	 * Count an email on the open connection; after a few, close it so the
+	 * next email starts a new one. Some providers cap emails per connection
+	 * (Proton said "too much mail" after exactly 20).
+	 */
+	private static function keepalive_count(): void {
+		if ( ! self::$keepalive ) {
+			return;
+		}
+		$max = max( 1, (int) apply_filters( 'aiem_smtp_emails_per_connection', 10 ) );
+		if ( ++self::$on_connection >= $max ) {
+			self::close_connection();
+		}
+	}
+
+	/** "Max emails per minute" setting; 0 = no limit. */
+	public static function per_minute_limit(): int {
+		return max( 0, (int) get_option( 'aiem_per_minute', 0 ) );
+	}
+
+	private static function close_connection(): void {
+		self::$on_connection = 0;
+		global $phpmailer;
+		if ( is_object( $phpmailer ) && method_exists( $phpmailer, 'smtpClose' ) ) {
+			try {
+				$phpmailer->smtpClose();
+			} catch ( \Throwable $e ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement
+				// Already closed.
+			}
+		}
+	}
+
 	private static function keepalive_end(): void {
 		if ( ! self::$keepalive ) {
 			return;
 		}
-		self::$keepalive = false;
+		self::$keepalive     = false;
+		self::$on_connection = 0;
 		remove_action( 'phpmailer_init', [ __CLASS__, 'keepalive_mailer' ], PHP_INT_MAX );
 		global $phpmailer;
 		if ( is_object( $phpmailer ) && method_exists( $phpmailer, 'smtpClose' ) ) {
@@ -429,7 +465,23 @@ class AIEM_Sender {
 		$fail_streak = [];     // consecutive non-bounce failures: send ids
 		$refused     = '';     // set when the server refused mail; stops the batch
 
+		// Even pacing ("Max emails per minute"): a steady trickle instead of
+		// bursts, which providers like Proton refuse ("too much mail"). The
+		// last send time carries over between batches.
+		$per_minute = self::per_minute_limit();
+		$gap        = $per_minute ? 60 / $per_minute : 0;
+		$last_send  = (float) get_option( 'aiem_last_send_at', 0 );
+
 		foreach ( $sends as $send ) {
+			if ( $gap && $last_send ) {
+				$wait = $last_send + $gap - microtime( true );
+				if ( $wait > 0 ) {
+					if ( microtime( true ) + $wait > $deadline ) {
+						break; // the next one belongs to the next batch
+					}
+					usleep( (int) ( $wait * 1000000 ) );
+				}
+			}
 			if ( microtime( true ) > $deadline ) {
 				break;
 			}
@@ -445,6 +497,9 @@ class AIEM_Sender {
 			self::$current_send_id = (int) $send->id;
 			$sent = wp_mail( $send->email, $campaign->subject, $html, $headers );
 			self::$current_send_id = 0;
+			$last_send = microtime( true );
+			update_option( 'aiem_last_send_at', $last_send, false );
+			self::keepalive_count();
 
 			if ( $sent ) {
 				$sent_count++;

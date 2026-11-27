@@ -954,12 +954,15 @@ jQuery(function ($) {
 			var batch  = Math.max(1, parseInt($('#aiem-batch-size').val(), 10) || 1);
 			var delay  = Math.max(1, parseInt($('#aiem-batch-delay').val(), 10) || 1);
 			var hourly = Math.max(0, parseInt($('#aiem-hourly-limit').val(), 10) || 0);
+			var perMin = Math.max(0, parseInt($('#aiem-per-minute').val(), 10) || 0);
 
 			$('#aiem-batch-delay-human').text(delay >= 60 ? '= ' + dur(delay) : '');
 
-			var perBatch = Math.max(1, Math.min(batch, Math.floor(budget / avg)));
+			// With a per-minute limit each email takes at least 60/perMin s.
+			var each     = perMin ? Math.max(avg, 60 / perMin) : avg;
+			var perBatch = Math.max(1, Math.min(batch, Math.floor(budget / each)));
 			if (hourly) { perBatch = Math.min(perBatch, hourly); }
-			var cycle   = delay + perBatch * avg;
+			var cycle   = delay + perBatch * each;
 			var perHour = (3600 / cycle) * perBatch;
 			var capped  = hourly && perHour > hourly;
 			if (capped) { perHour = hourly; }
@@ -972,11 +975,11 @@ jQuery(function ($) {
 			}
 			if (perBatch < batch) {
 				$('<div class="aiem-pace-note"></div>')
-					.text('Batches stop after ' + budget + ' s, so only about ' + perBatch + ' of ' + batch + ' go out per batch at this mail server speed.')
+					.text('Batches stop after ' + budget + ' s, so only about ' + perBatch + ' of ' + batch + ' go out per batch' + (perMin && 60 / perMin > avg ? ' at ' + perMin + ' per minute.' : ' at this mail server speed.'))
 					.appendTo($pace);
 			}
 		}
-		$('#aiem-batch-size, #aiem-batch-delay, #aiem-hourly-limit').on('input change', update);
+		$('#aiem-batch-size, #aiem-batch-delay, #aiem-hourly-limit, #aiem-per-minute').on('input change', update);
 		update();
 	})();
 });
